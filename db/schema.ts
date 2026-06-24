@@ -82,7 +82,29 @@ export const images = pgTable(
   (t) => [index("images_session_idx").on(t.sessionId)],
 );
 
+/**
+ * Error log for debugging. Each entry has a short `ref` shown to the operator so
+ * they can report it. No FK on session_id — logs must survive session deletion.
+ */
+export const errorLogs = pgTable(
+  "error_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ref: text("ref").notNull().unique(),
+    scope: text("scope").notNull(),
+    code: text("code"),
+    status: integer("status"),
+    message: text("message"),
+    detail: text("detail"),
+    sessionId: uuid("session_id"),
+    path: text("path"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("error_logs_created_idx").on(t.createdAt)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Image = typeof images.$inferSelect;
+export type ErrorLog = typeof errorLogs.$inferSelect;

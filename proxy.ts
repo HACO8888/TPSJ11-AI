@@ -47,5 +47,9 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Exclude Next internals and public metadata routes (icons, OG image, etc.)
+  // so crawlers / social cards can fetch them without auth.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|icon|apple-icon|opengraph-image|twitter-image|manifest.webmanifest|robots.txt|sitemap.xml).*)",
+  ],
 };

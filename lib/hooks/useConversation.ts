@@ -107,7 +107,13 @@ export function useConversation(sessionId: string | null) {
             }
             if (!dataStr) continue;
 
-            let data: { kind?: string; text?: string; prompt?: string; message?: string };
+            let data: {
+              kind?: string;
+              text?: string;
+              prompt?: string;
+              message?: string;
+              ref?: string;
+            };
             try {
               data = JSON.parse(dataStr);
             } catch {
@@ -128,7 +134,10 @@ export function useConversation(sessionId: string | null) {
               acc += data.text;
               setLive((l) => ({ ...l, assistantText: acc }));
             } else if (ev === "error") {
-              streamErr = data.message ?? "AI 回覆失敗";
+              console.error("[chat] stream error:", data);
+              streamErr = data.ref
+                ? `${data.message ?? "AI 回覆失敗"}（錯誤編號：${data.ref}）`
+                : (data.message ?? "AI 回覆失敗");
             }
             // ev === "image" / "done": result is persisted; reload renders it.
           }

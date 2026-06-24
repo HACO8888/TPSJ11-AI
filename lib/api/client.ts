@@ -3,6 +3,7 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public ref?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -23,14 +24,17 @@ async function handle(res: Response): Promise<Response> {
   if (!res.ok) {
     let code = "ERROR";
     let message = "發生錯誤";
+    let ref: string | undefined;
     try {
       const j = await res.json();
       code = j?.error?.code ?? code;
       message = j?.error?.message ?? message;
+      ref = j?.error?.ref;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, code, message);
+    if (ref) message = `${message}（錯誤編號：${ref}）`;
+    throw new ApiError(res.status, code, message, ref);
   }
   return res;
 }

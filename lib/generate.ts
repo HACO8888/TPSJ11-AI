@@ -2,6 +2,7 @@ import "server-only";
 import { createImageMessage, loadContextRows, persistAssistant } from "@/db/queries";
 import { chatOnce, chatStream, generateImage } from "./aiClient";
 import { buildContext } from "./context";
+import { logError } from "./errors";
 import { HttpError } from "./http";
 import { classifyImageIntent, hasImageCue } from "./intent";
 
@@ -162,8 +163,16 @@ export function buildGenerationStream(opts: {
         }
         if (!signal.aborted) {
           const he = err instanceof HttpError ? err : new HttpError(502, "UPSTREAM", "AI 回覆中斷");
+          const ref = await logError({
+            scope: "generate",
+            code: he.code,
+            status: he.status,
+            message: he.message,
+            detail: he.details ?? err,
+            sessionId,
+          });
           try {
-            controller.enqueue(sse("error", { code: he.code, message: he.message }));
+            controller.enqueue(sse("error", { code: he.code, message: he.message, ref }));
           } catch {
             /* controller may already be closed */
           }

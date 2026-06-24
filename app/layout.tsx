@@ -4,8 +4,20 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.APP_URL ?? "http://localhost:3000"),
   title: "臺北市第 11 次大露營 AI 助理",
   description: "臺北市第 11 次大露營 — AI 對話與圖片生成",
+  openGraph: {
+    title: "臺北市第 11 次大露營 AI 助理",
+    description: "對話 · 生圖 · 童軍營地",
+    type: "website",
+    locale: "zh_TW",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "臺北市第 11 次大露營 AI 助理",
+    description: "對話 · 生圖 · 童軍營地",
+  },
 };
 
 export const viewport: Viewport = {

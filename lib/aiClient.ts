@@ -103,19 +103,25 @@ function imageSize(b: Buffer): { width: number; height: number } | null {
   return null;
 }
 
-function networkError(): never {
-  throw new HttpError(504, "UPSTREAM_TIMEOUT", "AI 服務連線逾時或中斷");
+function networkError(e: unknown): never {
+  if (e instanceof Error && e.name === "AbortError") {
+    throw new HttpError(499, "ABORTED", "已取消");
+  }
+  throw new HttpError(504, "UPSTREAM_TIMEOUT", "AI 服務連線逾時或中斷", {
+    cause: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+  });
 }
 
 async function upstreamError(r: Response): Promise<HttpError> {
   const body = await r.text().catch(() => "");
-  let msg = body;
-  try {
-    msg = JSON.parse(body)?.error?.message ?? body;
-  } catch {
-    /* keep raw */
-  }
-  if (r.status === 401) return new HttpError(502, "UPSTREAM_AUTH", "AI 服務驗證失敗");
-  if (r.status === 429) return new HttpError(502, "UPSTREAM_RATE", "AI 服務忙碌中，請稍後再試");
-  return new HttpError(502, "UPSTREAM", "AI 服務錯誤", String(msg).slice(0, 300));
+  const details = {
+    upstreamStatus: r.status,
+    upstreamStatusText: r.statusText,
+    url: r.url,
+    body: body.slice(0, 4000),
+  };
+  if (r.status === 401) return new HttpError(502, "UPSTREAM_AUTH", "AI 服務驗證失敗", details);
+  if (r.status === 429)
+    return new HttpError(502, "UPSTREAM_RATE", "AI 服務忙碌中，請稍後再試", details);
+  return new HttpError(502, "UPSTREAM", "AI 服務錯誤", details);
 }

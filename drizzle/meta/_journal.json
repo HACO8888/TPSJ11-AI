@@ -8,6 +8,13 @@
       "when": 1782320023173,
       "tag": "0000_dapper_eddie_brock",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782325713339,
+      "tag": "0001_jittery_northstar",
+      "breakpoints": true
     }
   ]
 }

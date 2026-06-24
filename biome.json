@@ -10,7 +10,8 @@
       "!drizzle",
       "!next-env.d.ts",
       "!pnpm-lock.yaml",
-      "!**/*.css"
+      "!**/*.css",
+      "!**/*.svg"
     ]
   },
   "formatter": {
