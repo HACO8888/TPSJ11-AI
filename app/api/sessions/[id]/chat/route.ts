@@ -3,26 +3,32 @@ import { z } from "zod";
 import {
   appendUserMessage,
   autoTitleIfDefault,
+  createImageMessage,
   getSession,
   loadContextRows,
   persistAssistant,
   touchSession,
 } from "@/db/queries";
-import { chatOnce, chatStream } from "@/lib/aiClient";
+import { chatOnce, chatStream, generateImage } from "@/lib/aiClient";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { requireAuth } from "@/lib/auth/session";
 import { buildContext } from "@/lib/context";
 import { HttpError, parseJson, route, uuidParam } from "@/lib/http";
+import { classifyImageIntent, hasImageCue } from "@/lib/intent";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120; // image generation may run here (~23s)
 
 type Ctx = { params: Promise<{ id: string }> };
 
 const Body = z.object({ content: z.string().trim().min(1).max(8000) });
+const IMAGE_PREFIX = "/image ";
 
 function titleFrom(content: string): string {
-  const t = content.replace(/\s+/g, " ").trim();
+  const t = content
+    .replace(/\s+/g, " ")
+    .replace(/^\/image\s+/, "")
+    .trim();
   return t.length > 30 ? `${t.slice(0, 30)}…` : t;
 }
 
@@ -40,15 +46,16 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
   await autoTitleIfDefault(sessionId, titleFrom(content));
   await touchSession(sessionId);
 
-  const rows = await loadContextRows(sessionId);
-  const payload = buildContext(rows);
-
   const encoder = new TextEncoder();
   const sse = (event: string, data: unknown) =>
     encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
   const upstreamAbort = new AbortController();
   req.signal.addEventListener("abort", () => upstreamAbort.abort());
+
+  // Decide once whether this is a forced image (/image prefix).
+  const forced = content.startsWith(IMAGE_PREFIX);
+  const forcedPrompt = forced ? content.slice(IMAGE_PREFIX.length).trim() : "";
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -57,11 +64,57 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
       let usage: Record<string, unknown> | null = null;
 
       try {
+        // ---- Route: image vs chat ----
+        let kind: "chat" | "image" = "chat";
+        let imagePrompt = "";
+        if (forced && forcedPrompt) {
+          kind = "image";
+          imagePrompt = forcedPrompt;
+        } else if (hasImageCue(content)) {
+          const verdict = await classifyImageIntent(content, upstreamAbort.signal);
+          if (verdict.image) {
+            kind = "image";
+            imagePrompt = verdict.prompt;
+          }
+        }
+
+        // ---- Image branch ----
+        if (kind === "image") {
+          controller.enqueue(sse("route", { kind: "image", prompt: imagePrompt }));
+          const { buf, mime, width, height } = await generateImage(
+            imagePrompt,
+            upstreamAbort.signal,
+          );
+          const { imageId, messageId } = await createImageMessage({
+            sessionId,
+            prompt: imagePrompt,
+            bytes: buf,
+            mime,
+            byteLen: buf.length,
+            width,
+            height,
+          });
+          controller.enqueue(
+            sse("image", {
+              imageId,
+              messageId,
+              imageUrl: `/api/images/${imageId}`,
+              prompt: imagePrompt,
+            }),
+          );
+          controller.enqueue(sse("done", {}));
+          controller.close();
+          return;
+        }
+
+        // ---- Chat branch ----
+        controller.enqueue(sse("route", { kind: "chat" }));
+        const payload = buildContext(await loadContextRows(sessionId));
+
         let upstream: Response;
         try {
           upstream = await chatStream(payload, upstreamAbort.signal);
         } catch {
-          // Streaming unavailable → fall back to a single non-stream call.
           const once = await chatOnce(payload, upstreamAbort.signal);
           full = once.content;
           usage = once.usage;
@@ -108,12 +161,10 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
           }
         }
 
-        // Persist BEFORE 'done' so a real id is sent and a DB failure surfaces as 'error'.
         const saved = await persistAssistant(sessionId, full, usage, false);
         controller.enqueue(sse("done", { assistantMessageId: saved.id, usage }));
         controller.close();
       } catch (err) {
-        // Client disconnect OR upstream/DB error mid-stream: keep whatever we have.
         if (full) {
           await persistAssistant(sessionId, full, usage, true).catch(() => {});
         }

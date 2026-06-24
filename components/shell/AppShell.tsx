@@ -134,12 +134,7 @@ export function AppShell() {
         {activeId ? (
           <>
             <MessageList messages={convo.messages} live={convo.live} />
-            <Composer
-              busy={convo.busy}
-              onSendText={convo.send}
-              onSendImage={convo.sendImage}
-              onStop={convo.stop}
-            />
+            <Composer busy={convo.busy} onSend={convo.send} onStop={convo.stop} />
           </>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">

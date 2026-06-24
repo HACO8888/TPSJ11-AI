@@ -5,8 +5,6 @@ import { useCallback, useRef, useState } from "react";
 import { ApiError, apiGet } from "@/lib/api/client";
 import type { ChatMessageDTO, PendingImage } from "@/lib/types";
 
-const IMAGE_TIMEOUT_MS = 120_000; // align with server maxDuration
-
 export interface LiveState {
   userText: string | null;
   assistantText: string | null;
@@ -33,12 +31,13 @@ export function useConversation(sessionId: string | null) {
     qc.invalidateQueries({ queryKey: ["sessions"] });
   }, [qc, sessionId]);
 
+  // Single entry: the server decides chat vs image generation from the message.
   const send = useCallback(
     async (content: string) => {
       if (!sessionId || busy) return;
       setError(null);
       setBusy(true);
-      setLive({ userText: content, assistantText: "", image: null });
+      setLive({ userText: content, assistantText: null, image: null });
 
       const ac = new AbortController();
       abortRef.current = ac;
@@ -61,7 +60,7 @@ export function useConversation(sessionId: string | null) {
           throw new ApiError(
             res.status,
             j?.error?.code ?? "ERROR",
-            j?.error?.message ?? "回覆失敗",
+            j?.error?.message ?? "送出失敗",
           );
         }
 
@@ -89,81 +88,39 @@ export function useConversation(sessionId: string | null) {
             }
             if (!dataStr) continue;
 
-            let data: { text?: string; message?: string };
+            let data: { kind?: string; text?: string; prompt?: string; message?: string };
             try {
               data = JSON.parse(dataStr);
             } catch {
               continue;
             }
 
-            if (ev === "delta" && data.text) {
+            if (ev === "route") {
+              if (data.kind === "image") {
+                setLive((l) => ({
+                  ...l,
+                  assistantText: null,
+                  image: { id: "gen", prompt: data.prompt ?? "", status: "loading" },
+                }));
+              } else {
+                setLive((l) => ({ ...l, assistantText: "" }));
+              }
+            } else if (ev === "delta" && data.text) {
               acc += data.text;
               setLive((l) => ({ ...l, assistantText: acc }));
             } else if (ev === "error") {
               streamErr = data.message ?? "AI 回覆失敗";
             }
+            // ev === "image" / "done": the result is persisted; reload renders it.
           }
         }
 
         if (streamErr) setError(streamErr);
       } catch (e) {
         if (!ac.signal.aborted) {
-          setError(e instanceof ApiError ? e.message : "回覆失敗，請稍後再試");
+          setError(e instanceof ApiError ? e.message : "送出失敗，請稍後再試");
         }
       } finally {
-        await reload();
-        setLive(EMPTY);
-        setBusy(false);
-        abortRef.current = null;
-      }
-    },
-    [sessionId, busy, reload],
-  );
-
-  const sendImage = useCallback(
-    async (prompt: string) => {
-      if (!sessionId || busy) return;
-      setError(null);
-      setBusy(true);
-      const pendingId = `pending-${Date.now()}`;
-      setLive({
-        userText: `/image ${prompt}`,
-        assistantText: null,
-        image: { id: pendingId, prompt, status: "loading" },
-      });
-
-      const ac = new AbortController();
-      abortRef.current = ac;
-      const timeout = setTimeout(() => ac.abort(), IMAGE_TIMEOUT_MS);
-
-      try {
-        const res = await fetch(`/api/sessions/${sessionId}/image`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-          signal: ac.signal,
-        });
-        if (res.status === 401) {
-          window.location.href = "/login";
-          return;
-        }
-        if (!res.ok) {
-          const j = await res.json().catch(() => null);
-          throw new ApiError(
-            res.status,
-            j?.error?.code ?? "ERROR",
-            j?.error?.message ?? "圖片生成失敗",
-          );
-        }
-      } catch (e) {
-        if (ac.signal.aborted) {
-          // The server may still have committed the image — reload will reveal it.
-          setError("圖片生成逾時，若仍未出現可重試。");
-        } else {
-          setError(e instanceof ApiError ? e.message : "圖片生成失敗，請稍後再試");
-        }
-      } finally {
-        clearTimeout(timeout);
         await reload();
         setLive(EMPTY);
         setBusy(false);
@@ -187,7 +144,6 @@ export function useConversation(sessionId: string | null) {
     error,
     clearError: () => setError(null),
     send,
-    sendImage,
     stop,
   };
 }
