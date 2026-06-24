@@ -133,7 +133,12 @@ export function AppShell() {
 
         {activeId ? (
           <>
-            <MessageList messages={convo.messages} live={convo.live} />
+            <MessageList
+              messages={convo.messages}
+              live={convo.live}
+              busy={convo.busy}
+              onRegenerate={convo.regenerate}
+            />
             <Composer busy={convo.busy} onSend={convo.send} onStop={convo.stop} />
           </>
         ) : (

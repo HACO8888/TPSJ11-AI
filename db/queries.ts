@@ -139,6 +139,36 @@ export async function persistAssistant(
   return row;
 }
 
+export async function getMessage(sessionId: string, id: string) {
+  const [row] = await db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.id, id), eq(messages.sessionId, sessionId)))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function updateMessageContent(id: string, content: string) {
+  await db.update(messages).set({ content }).where(eq(messages.id, id));
+}
+
+/**
+ * Delete every message in the session created strictly after the target message
+ * (used by regenerate / edit-and-resend to branch from a turn). The comparison is
+ * done DB-to-DB via a subquery so microsecond precision is preserved — passing a
+ * JS Date would truncate to milliseconds and could delete the target itself.
+ * Cascades drop any images of the removed messages.
+ */
+export async function deleteMessagesAfter(sessionId: string, targetMessageId: string) {
+  await db.execute(sql`
+    delete from ${messages}
+    where ${messages.sessionId} = ${sessionId}
+      and ${messages.createdAt} > (
+        select created_at from ${messages} where id = ${targetMessageId}
+      )
+  `);
+}
+
 /* --------------------------------- context window ------------------------------ */
 
 export interface ContextRow {

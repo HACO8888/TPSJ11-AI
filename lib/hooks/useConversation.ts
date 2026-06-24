@@ -12,6 +12,12 @@ export interface LiveState {
 }
 const EMPTY: LiveState = { userText: null, assistantText: null, image: null };
 
+interface RunOpts {
+  userText?: string;
+  truncateAfterId?: string;
+  editedContent?: string;
+}
+
 export function useConversation(sessionId: string | null) {
   const qc = useQueryClient();
   const [live, setLive] = useState<LiveState>(EMPTY);
@@ -31,23 +37,36 @@ export function useConversation(sessionId: string | null) {
     qc.invalidateQueries({ queryKey: ["sessions"] });
   }, [qc, sessionId]);
 
-  // Single entry: the server decides chat vs image generation from the message.
-  const send = useCallback(
-    async (content: string) => {
+  const run = useCallback(
+    async (endpoint: "chat" | "regenerate", body: unknown, opts: RunOpts) => {
       if (!sessionId || busy) return;
       setError(null);
       setBusy(true);
-      setLive({ userText: content, assistantText: null, image: null });
+
+      // Optimistic view: a fresh send shows the user bubble; a regenerate
+      // truncates the cached list after the target turn (and applies the edit).
+      if (opts.truncateAfterId) {
+        qc.setQueryData<ChatMessageDTO[]>(["messages", sessionId], (old = []) => {
+          const idx = old.findIndex((m) => m.id === opts.truncateAfterId);
+          if (idx === -1) return old;
+          const kept = old.slice(0, idx + 1);
+          if (opts.editedContent != null) kept[idx] = { ...kept[idx], content: opts.editedContent };
+          return kept;
+        });
+        setLive(EMPTY);
+      } else {
+        setLive({ userText: opts.userText ?? null, assistantText: null, image: null });
+      }
 
       const ac = new AbortController();
       abortRef.current = ac;
       let streamErr: string | null = null;
 
       try {
-        const res = await fetch(`/api/sessions/${sessionId}/chat`, {
+        const res = await fetch(`/api/sessions/${sessionId}/${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify(body),
           signal: ac.signal,
         });
 
@@ -111,7 +130,7 @@ export function useConversation(sessionId: string | null) {
             } else if (ev === "error") {
               streamErr = data.message ?? "AI 回覆失敗";
             }
-            // ev === "image" / "done": the result is persisted; reload renders it.
+            // ev === "image" / "done": result is persisted; reload renders it.
           }
         }
 
@@ -127,7 +146,21 @@ export function useConversation(sessionId: string | null) {
         abortRef.current = null;
       }
     },
-    [sessionId, busy, reload],
+    [sessionId, busy, qc, reload],
+  );
+
+  const send = useCallback(
+    (content: string) => run("chat", { content }, { userText: content }),
+    [run],
+  );
+
+  const regenerate = useCallback(
+    (messageId: string, content?: string) =>
+      run("regenerate", content ? { messageId, content } : { messageId }, {
+        truncateAfterId: messageId,
+        editedContent: content,
+      }),
+    [run],
   );
 
   const stop = useCallback(() => {
@@ -144,6 +177,7 @@ export function useConversation(sessionId: string | null) {
     error,
     clearError: () => setError(null),
     send,
+    regenerate,
     stop,
   };
 }

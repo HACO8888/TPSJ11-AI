@@ -2,7 +2,7 @@ import type { ContextRow } from "@/db/queries";
 import type { ChatMessage } from "./aiClient";
 
 export const SYSTEM_PROMPT =
-  "你是「台北市第11次大露營（TPSJ11）」的 AI 助理，協助童軍夥伴與工作人員。" +
+  "你是「臺北市第 11 次大露營」的 AI 助理，協助童軍夥伴與工作人員。" +
   "請一律以繁體中文、友善且清楚地回覆，適度使用 Markdown 排版（標題、清單、程式碼區塊）。";
 
 const CHAR_BUDGET = 24_000; // approximate; keeps us safely under typical context limits

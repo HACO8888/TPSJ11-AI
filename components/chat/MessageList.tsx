@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowDown, Flame } from "lucide-react";
+import { ArrowDown, Flame, Pencil, RefreshCw } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { formatTime, totalTokens } from "@/lib/format";
 import type { LiveState } from "@/lib/hooks/useConversation";
@@ -10,6 +11,13 @@ import { ImageMessage } from "./ImageMessage";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 type NodeKind = "user" | "assistant" | "image" | "streaming";
+
+interface Props {
+  messages: ChatMessageDTO[];
+  live: LiveState;
+  busy: boolean;
+  onRegenerate: (messageId: string, content?: string) => void;
+}
 
 function Waypoint({ kind }: { kind: NodeKind }) {
   return (
@@ -46,7 +54,7 @@ function Row({
   children: ReactNode;
 }) {
   return (
-    <div className="relative flex gap-3 pb-5">
+    <div className="group/row relative flex gap-3 pb-5">
       <Waypoint kind={kind} />
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] text-muted">
@@ -60,17 +68,88 @@ function Row({
   );
 }
 
-function UserText({ content }: { content: string }) {
-  const isImageReq = content.startsWith("/image ");
-  const text = isImageReq ? content.slice(7) : content;
+function ImageReqBadge() {
   return (
-    <div className="inline-block max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-2.5 text-[15px] text-ink">
-      {isImageReq && (
-        <span className="mr-1.5 inline-flex items-center gap-1 rounded-md bg-accent/15 px-1.5 py-0.5 align-middle font-mono text-[11px] text-accent">
-          <Flame size={11} /> 生圖
-        </span>
-      )}
-      {text}
+    <span className="mr-1.5 inline-flex items-center gap-1 rounded-md bg-accent/15 px-1.5 py-0.5 align-middle font-mono text-[11px] text-accent">
+      <Flame size={11} /> 生圖
+    </span>
+  );
+}
+
+/** A persisted user message: renders markdown, with hover edit / regenerate. */
+function UserMessage({
+  message,
+  busy,
+  onRegenerate,
+}: {
+  message: ChatMessageDTO;
+  busy: boolean;
+  onRegenerate: (messageId: string, content?: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(message.content);
+  const isImageReq = message.content.startsWith("/image ");
+  const shown = isImageReq ? message.content.slice(7) : message.content;
+
+  if (editing) {
+    return (
+      <div className="rounded-xl rounded-tl-sm border border-accent/60 bg-surface-2 p-2">
+        <textarea
+          // biome-ignore lint/a11y/noAutofocus: inline edit should focus immediately
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          rows={Math.min(8, Math.max(2, value.split("\n").length))}
+          className="w-full resize-none bg-transparent px-1.5 py-1 text-[15px] text-ink outline-none"
+        />
+        <div className="mt-1 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+            取消
+          </Button>
+          <Button
+            variant="brand"
+            size="sm"
+            disabled={!value.trim()}
+            onClick={() => {
+              const v = value.trim();
+              setEditing(false);
+              if (v && v !== message.content) onRegenerate(message.id, v);
+            }}
+          >
+            送出
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="inline-block max-w-full rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-1.5">
+        {isImageReq && <ImageReqBadge />}
+        <MarkdownRenderer content={shown} />
+      </div>
+      <div className="mt-1 flex gap-1">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setValue(message.content);
+            setEditing(true);
+          }}
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11px] text-muted hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+        >
+          <Pencil size={11} /> 編輯
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onRegenerate(message.id)}
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11px] text-muted hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+        >
+          <RefreshCw size={11} /> 重新生成
+        </button>
+      </div>
     </div>
   );
 }
@@ -84,7 +163,7 @@ function AssistantText({ content, partial }: { content: string; partial?: boolea
   );
 }
 
-export function MessageList({ messages, live }: { messages: ChatMessageDTO[]; live: LiveState }) {
+export function MessageList({ messages, live, busy, onRegenerate }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
 
@@ -130,7 +209,7 @@ export function MessageList({ messages, live }: { messages: ChatMessageDTO[]; li
                   </Row>
                 ) : m.role === "user" ? (
                   <Row key={m.id} kind="user" label="你" time={formatTime(m.createdAt)}>
-                    <UserText content={m.content} />
+                    <UserMessage message={m} busy={busy} onRegenerate={onRegenerate} />
                   </Row>
                 ) : (
                   <Row
@@ -148,25 +227,22 @@ export function MessageList({ messages, live }: { messages: ChatMessageDTO[]; li
               {/* Optimistic + streaming rows */}
               {live.userText && (
                 <Row kind="user" label="你">
-                  <UserText content={live.userText} />
+                  <div className="inline-block max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-2.5 text-[15px] text-ink">
+                    {live.userText}
+                  </div>
                 </Row>
               )}
               {live.assistantText !== null && (
                 <Row kind="streaming" label="營地助理 · 回覆中">
-                  {live.assistantText === "" ? (
-                    <div className="rounded-xl rounded-tl-sm border border-line bg-surface px-4 py-3">
+                  <div className="rounded-xl rounded-tl-sm border border-line bg-surface px-4 py-3">
+                    {live.assistantText === "" ? (
                       <span className="inline-flex gap-1">
                         <Dot /> <Dot /> <Dot />
                       </span>
-                    </div>
-                  ) : (
-                    <div className="rounded-xl rounded-tl-sm border border-line bg-surface px-4 py-3">
-                      <span className="prose-camp whitespace-pre-wrap text-[15px]">
-                        {live.assistantText}
-                      </span>
-                      <span className="caret">▍</span>
-                    </div>
-                  )}
+                    ) : (
+                      <MarkdownRenderer content={live.assistantText} />
+                    )}
+                  </div>
                 </Row>
               )}
               {live.image && (
@@ -219,7 +295,7 @@ function EmptyConversation() {
       <Flame className="mb-3 h-8 w-8 text-accent" strokeWidth={1.8} />
       <h2 className="font-display text-lg font-semibold text-ink">開始第一段對話</h2>
       <p className="mt-1.5 max-w-sm text-sm text-muted">
-        輸入訊息開始，或切換到「生圖」模式生成圖片。每個對話都有獨立的記憶。
+        直接輸入訊息開始。需要圖片時就說「幫我畫…」，系統會自動生成。每個對話都有獨立的記憶。
       </p>
     </div>
   );

@@ -4,8 +4,8 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "TPSJ11 · 大露營 AI 助理",
-  description: "台北市第11次大露營 — AI 對話與圖片生成",
+  title: "臺北市第 11 次大露營 AI 助理",
+  description: "臺北市第 11 次大露營 — AI 對話與圖片生成",
 };
 
 export const viewport: Viewport = {
@@ -15,8 +15,8 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-// Apply the saved theme before paint to avoid a flash of the wrong palette.
-const themeScript = `(function(){try{var t=localStorage.getItem('tpsj-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;if(d)document.documentElement.classList.add('dark');}catch(e){}})();`;
+// Default to the light palette; only go dark when the user has explicitly chosen it.
+const themeScript = `(function(){try{if(localStorage.getItem('tpsj-theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
