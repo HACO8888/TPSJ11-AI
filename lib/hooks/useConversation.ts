@@ -112,6 +112,7 @@ export function useConversation(sessionId: string | null) {
               text?: string;
               prompt?: string;
               message?: string;
+              code?: string;
               ref?: string;
             };
             try {
@@ -128,13 +129,17 @@ export function useConversation(sessionId: string | null) {
                   image: { id: "gen", prompt: data.prompt ?? "", status: "loading" },
                 }));
               } else {
-                setLive((l) => ({ ...l, assistantText: "" }));
+                // chat (incl. fallback from a rejected image prompt) — clear any
+                // image-loading placeholder and show the streaming reply.
+                setLive((l) => ({ ...l, assistantText: "", image: null }));
               }
             } else if (ev === "delta" && data.text) {
               acc += data.text;
               setLive((l) => ({ ...l, assistantText: acc }));
             } else if (ev === "error") {
-              console.error("[chat] stream error:", data);
+              console.warn(
+                `[chat] 伺服器錯誤 code=${data.code ?? "?"} ref=${data.ref ?? "?"} message=${data.message ?? ""}`,
+              );
               streamErr = data.ref
                 ? `${data.message ?? "AI 回覆失敗"}（錯誤編號：${data.ref}）`
                 : (data.message ?? "AI 回覆失敗");

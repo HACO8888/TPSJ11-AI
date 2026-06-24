@@ -72,37 +72,66 @@ export function buildGenerationStream(opts: {
         }
 
         // ---- Image branch ----
+        let imageFallback = false;
         if (kind === "image") {
           controller.enqueue(sse("route", { kind: "image", prompt: imagePrompt }));
-          const { buf, mime, width, height } = await generateImage(
-            imagePrompt,
-            upstreamAbort.signal,
-          );
-          const { imageId, messageId } = await createImageMessage({
-            sessionId,
-            prompt: imagePrompt,
-            bytes: buf,
-            mime,
-            byteLen: buf.length,
-            width,
-            height,
-          });
-          controller.enqueue(
-            sse("image", {
-              imageId,
-              messageId,
-              imageUrl: `/api/images/${imageId}`,
+          try {
+            const { buf, mime, width, height } = await generateImage(
+              imagePrompt,
+              upstreamAbort.signal,
+            );
+            const { imageId, messageId } = await createImageMessage({
+              sessionId,
               prompt: imagePrompt,
-            }),
-          );
-          controller.enqueue(sse("done", {}));
-          controller.close();
-          return;
+              bytes: buf,
+              mime,
+              byteLen: buf.length,
+              width,
+              height,
+            });
+            controller.enqueue(
+              sse("image", {
+                imageId,
+                messageId,
+                imageUrl: `/api/images/${imageId}`,
+                prompt: imagePrompt,
+              }),
+            );
+            controller.enqueue(sse("done", {}));
+            controller.close();
+            return;
+          } catch (e) {
+            const upstreamStatus =
+              e instanceof HttpError && e.details && typeof e.details === "object"
+                ? (e.details as { upstreamStatus?: number }).upstreamStatus
+                : undefined;
+            // 400/422 = the image model rejected the prompt (too vague / not an
+            // image request). Fall back to a chat reply so the assistant can ask
+            // for a clearer description instead of surfacing a confusing error.
+            if (upstreamStatus !== 400 && upstreamStatus !== 422) throw e;
+            await logError({
+              scope: "generate.image-fallback",
+              code: "IMAGE_REJECTED",
+              status: upstreamStatus,
+              message: "圖片 prompt 被拒，改用對話回覆",
+              detail: e instanceof HttpError ? e.details : e,
+              sessionId,
+            });
+            imageFallback = true;
+          }
         }
 
         // ---- Chat branch ----
         controller.enqueue(sse("route", { kind: "chat" }));
         const payload = buildContext(await loadContextRows(sessionId));
+        if (imageFallback) {
+          payload.push({
+            role: "system",
+            content:
+              "提示：使用者剛才的訊息看起來想生成圖片，但描述不夠具體。" +
+              "請用友善的一兩句話詢問他想要的圖片內容（例如主題、風格、場景），不要說自己無法生成圖片。",
+          });
+        }
 
         let upstream: Response;
         try {
