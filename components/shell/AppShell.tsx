@@ -1,7 +1,7 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Composer } from "@/components/chat/Composer";
 import { MessageList } from "@/components/chat/MessageList";
@@ -22,6 +22,7 @@ export function AppShell() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   const sessionsQ = useSessions();
   const sessions = sessionsQ.data ?? [];
@@ -30,7 +31,9 @@ export function AppShell() {
   const deleteM = useDeleteSession();
   const convo = useConversation(activeId);
 
-  // Restore the active session from the URL on first load.
+  // Restore a deep-linked session from the URL. Otherwise the default is a fresh,
+  // unsaved conversation — a session is only created on the first message, so
+  // opening the app (or "新對話") without typing leaves nothing behind.
   useEffect(() => {
     const s = new URLSearchParams(window.location.search).get("s");
     if (s) setActiveId(s);
@@ -41,15 +44,29 @@ export function AppShell() {
     window.history.replaceState(null, "", id ? `/?s=${id}` : "/");
   }
 
-  // Auto-select the most recent session when none is active.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot auto-select; setActive must not be a dep or it would loop
+  // When a brand-new session has just been created for the first message, send it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fire once the new session id + queued message are both ready
   useEffect(() => {
-    if (!activeId && sessions.length > 0) setActive(sessions[0].id);
-  }, [activeId, sessions.length]);
+    if (activeId && pendingMessage) {
+      convo.send(pendingMessage);
+      setPendingMessage(null);
+    }
+  }, [activeId, pendingMessage]);
 
-  async function handleNew() {
+  async function handleSend(text: string) {
+    if (activeId) {
+      convo.send(text);
+      return;
+    }
+    // Lazy create: only record a session once there is a message.
     const s = await createM.mutateAsync(undefined);
     setActive(s.id);
+    setPendingMessage(text);
+  }
+
+  function handleNew() {
+    // Go to a fresh conversation; the session is created on the first message.
+    setActive(null);
     setSheetOpen(false);
   }
 
@@ -63,10 +80,7 @@ export function AppShell() {
     const id = pendingDelete;
     deleteM.mutate(id, {
       onSuccess: () => {
-        if (id === activeId) {
-          const next = sessions.find((s) => s.id !== id);
-          setActive(next?.id ?? null);
-        }
+        if (id === activeId) setActive(null);
       },
     });
     setPendingDelete(null);
@@ -88,7 +102,8 @@ export function AppShell() {
     onLogout: handleLogout,
   };
 
-  const activeTitle = sessions.find((s) => s.id === activeId)?.title ?? "營地助理";
+  const busy = convo.busy || createM.isPending || pendingMessage !== null;
+  const activeTitle = sessions.find((s) => s.id === activeId)?.title ?? "新對話";
 
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -131,27 +146,13 @@ export function AppShell() {
           </div>
         )}
 
-        {activeId ? (
-          <>
-            <MessageList
-              messages={convo.messages}
-              live={convo.live}
-              busy={convo.busy}
-              onRegenerate={convo.regenerate}
-            />
-            <Composer busy={convo.busy} onSend={convo.send} onStop={convo.stop} />
-          </>
-        ) : (
-          <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-            <h2 className="font-display text-xl font-semibold text-ink">還沒有對話</h2>
-            <p className="mt-2 max-w-sm text-sm text-muted">
-              建立第一個對話，開始與模型協作、生成大露營需要的圖片。
-            </p>
-            <Button variant="brand" size="md" onClick={handleNew} className="mt-5">
-              <Plus size={16} /> 新對話
-            </Button>
-          </div>
-        )}
+        <MessageList
+          messages={convo.messages}
+          live={convo.live}
+          busy={busy}
+          onRegenerate={convo.regenerate}
+        />
+        <Composer busy={busy} onSend={handleSend} onStop={convo.stop} />
       </main>
 
       <ConfirmDialog
