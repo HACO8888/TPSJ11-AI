@@ -1,9 +1,9 @@
-import { chatOnce } from "./aiClient";
+import { type ChatMessage, chatOnce } from "./aiClient";
 
 // Cheap gate: only when a message mentions image-ish words do we pay for an
 // LLM classification. Plain chat messages skip it entirely (zero added latency).
 const IMAGE_CUE =
-  /生圖|生成.*圖|產生.*圖|畫(一|個|張|出|幅)?|繪(製|圖)|來(一|張|個).*(圖|照)|給我.*(圖|照)|張[圖照]|要.{0,5}[圖照]片?|想.{0,4}[圖照]片?|圖片|圖像|海報|插圖|貼圖|logo|icon|圖示|畫面|image|picture|photo|illustration|poster|draw|paint|render/i;
+  /生圖|生成.*[圖照]|產生.*[圖照]|(生成|製作|設計|繪製|產生|做|弄|幫我做)[^，。！？\n]{0,6}(海報|卡片|插畫|封面|貼紙|名牌|證書|橫幅|布條|頭像|桌布|一張|一幅|banner|logo)|畫(一|個|張|出|幅)?|繪(製|圖)|來(一|張|個).*(圖|照)|給我.*(圖|照)|張[圖照]|要.{0,5}[圖照]片?|想.{0,4}[圖照]片?|圖片|圖像|海報|插圖|插畫|貼圖|貼紙|頭像|桌布|封面|名牌|證書|橫幅|布條|圖示|畫面|logo|icon|image|picture|photo|illustration|poster|draw|paint|render/i;
 
 export function hasImageCue(text: string): boolean {
   return IMAGE_CUE.test(text);
@@ -11,8 +11,8 @@ export function hasImageCue(text: string): boolean {
 
 /**
  * A short image request with no actual subject ("幫我畫", "我要一張圖", "畫個東西").
- * Detected deterministically so we can skip the classifier entirely and answer
- * with an instant canned clarification.
+ * Detected deterministically so a first-turn vague request can be answered with
+ * an instant canned clarification (skipping the classifier).
  */
 export function isBareImageRequest(text: string): boolean {
   if (text.length > 14) return false;
@@ -26,11 +26,12 @@ export function isBareImageRequest(text: string): boolean {
 }
 
 const CLASSIFY_SYSTEM =
-  "你是一個意圖判斷器。判斷使用者這則訊息是不是想要一張圖片（想生成／繪製圖片），以及描述是否已具體到可以直接生成。" +
-  "只要使用者表達想要圖片，image 就為 true，即使沒有提供具體內容（例如「幫我畫」「我要一張圖」「畫個東西」「來張圖」都算 image=true）。" +
-  "只輸出 JSON，不要任何其他文字，格式：" +
-  '{"image": true 或 false, "ready": true 或 false, "prompt": "若 image 為 true 且具體，萃取一段可直接生成圖片的描述（保留主體、風格、場景）；否則給空字串"}。' +
-  "ready 判準：描述需有明確的主體或內容才為 true；上述那些沒有主題的例子 ready 為 false。";
+  "你是一個意圖判斷器。根據提供的對話脈絡與使用者最新訊息，判斷使用者是不是想要一張圖片，以及能否得出可直接生成的具體描述。" +
+  "只要使用者表達想要圖片就 image=true（即使沒主題，如「幫我畫」「我要一張圖」）。" +
+  "若使用者要求把先前對話的內容做成圖／海報（例如「畫成圖」「用你的文字生成海報」「把上面做成圖」），" +
+  "請從先前對話萃取主題，產生一段具體的圖片生成描述，並 ready=true。" +
+  '只輸出 JSON，不要任何其他文字：{"image": true 或 false, "ready": true 或 false, "prompt": "具體的圖片生成描述；若無法得出則給空字串"}。' +
+  "ready 判準：能得出明確主體或內容才為 true；若完全沒有可用內容（例如一開始就只說「幫我畫」），ready 為 false。";
 
 interface Parsed {
   image?: unknown;
@@ -54,24 +55,37 @@ export interface ImageVerdict {
   prompt: string;
 }
 
+export interface HistoryTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 /**
- * Decide whether `content` is an image-generation request and whether its
- * description is concrete enough to generate. `ready === false` lets the caller
- * skip the slow image round-trip and ask for clarification in chat instead.
- * Falls back to chat on any doubt.
+ * Decide whether the latest message wants an image and whether a concrete prompt
+ * can be produced — using the recent conversation, so requests like "用你的文字
+ * 生成一張海報" pull their subject from earlier turns. `ready === false` lets the
+ * caller ask for clarification in chat instead of generating a bad image.
  */
 export async function classifyImageIntent(
   content: string,
+  history: HistoryTurn[],
   signal?: AbortSignal,
 ): Promise<ImageVerdict> {
+  // Recent prior turns (exclude the just-inserted current user message).
+  const prior = history.slice(0, -1).slice(-6);
+  const priorText = prior
+    .map((r) => `${r.role === "user" ? "使用者" : "助理"}：${r.content}`)
+    .join("\n");
+  const userMsg =
+    (priorText ? `先前對話：\n${priorText}\n\n` : "") +
+    `使用者最新訊息：${content}\n\n請依上述判斷並輸出 JSON。`;
+
   try {
-    const { content: raw } = await chatOnce(
-      [
-        { role: "system", content: CLASSIFY_SYSTEM },
-        { role: "user", content },
-      ],
-      signal,
-    );
+    const messages: ChatMessage[] = [
+      { role: "system", content: CLASSIFY_SYSTEM },
+      { role: "user", content: userMsg },
+    ];
+    const { content: raw } = await chatOnce(messages, signal);
     const json = extractJson(raw);
     if (json && typeof json.image === "boolean") {
       const prompt =

@@ -57,6 +57,10 @@ export function buildGenerationStream(opts: {
       let usage: Record<string, unknown> | null = null;
 
       try {
+        // Load the conversation once (used for routing context + the chat reply).
+        const history = await loadContextRows(sessionId);
+        const hasPriorContent = history.slice(0, -1).some((r) => r.role === "assistant");
+
         // ---- Route: image vs chat ----
         let kind: "chat" | "image" = "chat";
         let imagePrompt = "";
@@ -66,17 +70,17 @@ export function buildGenerationStream(opts: {
           kind = "image";
           imagePrompt = forcedPrompt;
         } else if (hasImageCue(content)) {
-          if (isBareImageRequest(content)) {
-            // "幫我畫" / "我要一張圖" — no subject. Skip the classifier entirely.
+          if (isBareImageRequest(content) && !hasPriorContent) {
+            // First-turn "幫我畫" with nothing to draw — instant canned clarification.
             vagueImage = true;
           } else {
-            const verdict = await classifyImageIntent(content, upstreamAbort.signal);
+            // Context-aware: can turn an earlier turn into a concrete image prompt
+            // (e.g. "用你的文字生成一張海報").
+            const verdict = await classifyImageIntent(content, history, upstreamAbort.signal);
             if (verdict.image && verdict.ready && verdict.prompt) {
               kind = "image";
               imagePrompt = verdict.prompt;
             } else if (verdict.image) {
-              // Wants an image but the description is too vague — answer instantly
-              // with a canned clarification (no extra LLM round-trip).
               vagueImage = true;
             }
           }
@@ -146,7 +150,7 @@ export function buildGenerationStream(opts: {
 
         // ---- Chat branch ----
         controller.enqueue(sse("route", { kind: "chat" }));
-        const payload = buildContext(await loadContextRows(sessionId));
+        const payload = buildContext(history);
         if (imageFallback) {
           payload.push({
             role: "system",
