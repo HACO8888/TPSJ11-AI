@@ -4,7 +4,7 @@ import { chatOnce, chatStream, generateImage } from "./aiClient";
 import { buildContext } from "./context";
 import { logError } from "./errors";
 import { HttpError } from "./http";
-import { classifyImageIntent, hasImageCue } from "./intent";
+import { classifyImageIntent, hasImageCue, isBareImageRequest } from "./intent";
 
 const IMAGE_PREFIX = "/image ";
 
@@ -61,19 +61,38 @@ export function buildGenerationStream(opts: {
         let kind: "chat" | "image" = "chat";
         let imagePrompt = "";
         let imageFallback = false;
+        let vagueImage = false;
         if (forced && forcedPrompt) {
           kind = "image";
           imagePrompt = forcedPrompt;
         } else if (hasImageCue(content)) {
-          const verdict = await classifyImageIntent(content, upstreamAbort.signal);
-          if (verdict.image && verdict.ready && verdict.prompt) {
-            kind = "image";
-            imagePrompt = verdict.prompt;
-          } else if (verdict.image) {
-            // Wants an image but the description is too vague — skip the slow
-            // image round-trip and ask for specifics in chat instead.
-            imageFallback = true;
+          if (isBareImageRequest(content)) {
+            // "幫我畫" / "我要一張圖" — no subject. Skip the classifier entirely.
+            vagueImage = true;
+          } else {
+            const verdict = await classifyImageIntent(content, upstreamAbort.signal);
+            if (verdict.image && verdict.ready && verdict.prompt) {
+              kind = "image";
+              imagePrompt = verdict.prompt;
+            } else if (verdict.image) {
+              // Wants an image but the description is too vague — answer instantly
+              // with a canned clarification (no extra LLM round-trip).
+              vagueImage = true;
+            }
           }
+        }
+
+        // ---- Vague image request → instant canned clarification (no LLM call) ----
+        if (vagueImage) {
+          controller.enqueue(sse("route", { kind: "chat" }));
+          const msg =
+            "好的，我可以幫你生成圖片！請描述你想要的內容（主題、風格、場景），" +
+            "例如「童軍在營火旁搭帳篷、溫暖插畫風」，我就會為你繪製。🔥";
+          const saved = await persistAssistant(sessionId, msg, null, false);
+          controller.enqueue(sse("delta", { text: msg }));
+          controller.enqueue(sse("done", { assistantMessageId: saved.id }));
+          controller.close();
+          return;
         }
 
         // ---- Image branch ----
@@ -133,7 +152,8 @@ export function buildGenerationStream(opts: {
             role: "system",
             content:
               "提示：使用者剛才的訊息看起來想生成圖片，但描述不夠具體。" +
-              "請用友善的一兩句話詢問他想要的圖片內容（例如主題、風格、場景），不要說自己無法生成圖片。",
+              "請用最多兩句話、簡短友善地詢問他想要的圖片內容（主題、風格、場景即可），" +
+              "不要列出範例清單或長篇說明，也不要說自己無法生成圖片。",
           });
         }
 

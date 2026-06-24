@@ -53,9 +53,10 @@ export function useConversation(sessionId: string | null) {
           if (opts.editedContent != null) kept[idx] = { ...kept[idx], content: opts.editedContent };
           return kept;
         });
-        setLive(EMPTY);
+        // Show the working indicator immediately (the user row is already in the list).
+        setLive({ userText: null, assistantText: "", image: null });
       } else {
-        setLive({ userText: opts.userText ?? null, assistantText: null, image: null });
+        setLive({ userText: opts.userText ?? null, assistantText: "", image: null });
       }
 
       const ac = new AbortController();
