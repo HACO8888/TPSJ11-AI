@@ -60,19 +60,23 @@ export function buildGenerationStream(opts: {
         // ---- Route: image vs chat ----
         let kind: "chat" | "image" = "chat";
         let imagePrompt = "";
+        let imageFallback = false;
         if (forced && forcedPrompt) {
           kind = "image";
           imagePrompt = forcedPrompt;
         } else if (hasImageCue(content)) {
           const verdict = await classifyImageIntent(content, upstreamAbort.signal);
-          if (verdict.image) {
+          if (verdict.image && verdict.ready && verdict.prompt) {
             kind = "image";
             imagePrompt = verdict.prompt;
+          } else if (verdict.image) {
+            // Wants an image but the description is too vague — skip the slow
+            // image round-trip and ask for specifics in chat instead.
+            imageFallback = true;
           }
         }
 
         // ---- Image branch ----
-        let imageFallback = false;
         if (kind === "image") {
           controller.enqueue(sse("route", { kind: "image", prompt: imagePrompt }));
           try {
