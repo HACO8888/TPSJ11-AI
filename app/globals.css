@@ -1,0 +1,285 @@
+@import "tailwindcss";
+
+/* Class-based dark mode toggled by `.dark` on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  TSJ11 · 大露營 — "營地步道 / Camp Trail" design system.
+  Subject: an internal AI console for the Taipei 11th Scout Grand Camp.
+  Palette grounded in camp materials: canvas tent, pine woodland, kraft tags,
+  and campfire ember. One accent (ember) spent with restraint.
+*/
+:root {
+  --canvas: #f1ede0; /* warm canvas / kraft */
+  --surface: #fbf9f2; /* raised panels */
+  --surface-2: #ece6d6; /* sunken / hover */
+  --line: #ddd6c4; /* kraft hairline */
+  --ink: #21281f; /* pine-near-black text */
+  --muted: #6c7363; /* sage gray */
+  --brand: #2f6b3d; /* pine / forest green */
+  --brand-ink: #ffffff; /* text on brand */
+  --accent: #d9591f; /* campfire ember */
+  --accent-soft: #f3d8c4; /* ember tint */
+  --danger: #b23b2e;
+  --ring: #d9591f;
+}
+
+.dark {
+  --canvas: #14180f; /* night woods */
+  --surface: #1b2116;
+  --surface-2: #232a1c;
+  --line: #2e3626;
+  --ink: #e9e6d9; /* warm canvas-white */
+  --muted: #99a088;
+  --brand: #62a86f; /* lighter pine for dark bg */
+  --brand-ink: #0e120a;
+  --accent: #f0884b; /* ember glows brighter at night */
+  --accent-soft: #3a2417;
+  --danger: #e0705f;
+  --ring: #f0884b;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+
+  --font-display: "Bitter", ui-serif, Georgia, serif;
+  --font-sans: "IBM Plex Sans TC", ui-sans-serif, system-ui, "PingFang TC",
+    "Microsoft JhengHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--accent);
+    color: #fff;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  /* Quiet, kraft-toned scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* ---------------------------------------------------------------- signature */
+/* Camp-trail waypoint: an ember node on the conversation rail. */
+@keyframes ember-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent);
+    opacity: 0.78;
+  }
+}
+.ember {
+  animation: ember-pulse 1.4s ease-in-out infinite;
+}
+
+/* Streaming caret — a small ember tick at the tail of the live reply. */
+@keyframes caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0.15;
+  }
+}
+.caret {
+  display: inline-block;
+  width: 0.5ch;
+  margin-left: 1px;
+  color: var(--accent);
+  animation: caret-blink 1s step-end infinite;
+}
+
+/* Image placeholder shimmer */
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ink) 8%, transparent),
+    transparent
+  );
+  animation: shimmer 1.6s infinite;
+}
+
+/* Mobile sidebar sheet slide */
+@keyframes sheet-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.sheet-in {
+  animation: sheet-in 0.18s ease-out;
+}
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.overlay-in {
+  animation: overlay-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ember,
+  .caret,
+  .shimmer::after,
+  .sheet-in,
+  .overlay-in {
+    animation: none !important;
+  }
+  .caret {
+    opacity: 1;
+  }
+}
+
+/* Markdown prose inside assistant bubbles */
+.prose-camp {
+  line-height: 1.7;
+  word-break: break-word;
+}
+.prose-camp > :first-child {
+  margin-top: 0;
+}
+.prose-camp > :last-child {
+  margin-bottom: 0;
+}
+.prose-camp p {
+  margin: 0.6em 0;
+}
+.prose-camp h1,
+.prose-camp h2,
+.prose-camp h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1em 0 0.4em;
+}
+.prose-camp h1 {
+  font-size: 1.3rem;
+}
+.prose-camp h2 {
+  font-size: 1.15rem;
+}
+.prose-camp h3 {
+  font-size: 1.03rem;
+}
+.prose-camp ul,
+.prose-camp ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.prose-camp ul {
+  list-style: disc;
+}
+.prose-camp ol {
+  list-style: decimal;
+}
+.prose-camp li {
+  margin: 0.25em 0;
+}
+.prose-camp a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-camp blockquote {
+  border-left: 3px solid var(--brand);
+  padding-left: 0.9em;
+  color: var(--muted);
+  margin: 0.6em 0;
+}
+.prose-camp code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--surface-2);
+  padding: 0.12em 0.4em;
+  border-radius: 5px;
+}
+.prose-camp pre {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9em 1em;
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+.prose-camp pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.84em;
+  line-height: 1.6;
+}
+.prose-camp table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  font-size: 0.92em;
+}
+.prose-camp th,
+.prose-camp td {
+  border: 1px solid var(--line);
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
+.prose-camp th {
+  background: var(--surface-2);
+}

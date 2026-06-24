@@ -1,0 +1,29 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+*.log
+npm-debug.log*
+
+# env (keep only the example committed)
+.env
+.env.*
+!.env.example
+
+# typescript
+*.tsbuildinfo
+
+# drizzle (keep migrations, ignore studio meta cache if any)
+/drizzle/.cache
