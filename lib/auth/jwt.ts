@@ -3,7 +3,7 @@ import { type JWTPayload, jwtVerify, SignJWT } from "jose";
 // Edge-safe: pure jose, reads process.env directly (NOT the server-only env module),
 // so the middleware can import and verify on the edge runtime.
 
-export const SESSION_COOKIE = "tsj_session";
+export const SESSION_COOKIE = "tpsj_session";
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days (seconds)
 /** When the remaining lifetime drops below this, middleware re-issues the cookie. */
 export const SESSION_REFRESH_THRESHOLD = 60 * 60 * 24; // 1 day (seconds)

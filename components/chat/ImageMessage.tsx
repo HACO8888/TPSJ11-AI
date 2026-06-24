@@ -50,7 +50,7 @@ export function ImageMessage({ imageUrl, prompt }: { imageUrl: string; prompt: s
             <div className="mt-3 flex items-center gap-2">
               <a
                 href={imageUrl}
-                download={`tsj11-${prompt.slice(0, 20)}.jpg`}
+                download={`tpsj11-${prompt.slice(0, 20)}.jpg`}
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white/10 px-3 text-sm text-white hover:bg-white/20"
               >
                 <Download size={16} /> 下載

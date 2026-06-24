@@ -40,7 +40,7 @@ export function LoginForm() {
         <div className="mb-7 text-center">
           <div className="mb-3 inline-flex items-center gap-2">
             <Flame className="h-6 w-6 text-accent" strokeWidth={2.2} />
-            <span className="font-mono text-sm tracking-[0.2em] text-muted">TSJ11 · 大露營</span>
+            <span className="font-mono text-sm tracking-[0.2em] text-muted">TPSJ11 · 大露營</span>
           </div>
           <h1 className="font-display text-2xl font-semibold text-ink">營地 AI 助理</h1>
           <p className="mt-1.5 text-sm text-muted">登入以開始與模型協作、生成圖片。</p>

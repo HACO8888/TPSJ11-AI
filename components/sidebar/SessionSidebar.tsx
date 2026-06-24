@@ -31,7 +31,7 @@ export function SessionSidebar({
     <div className="flex h-full flex-col bg-surface">
       <div className="flex items-center gap-2 px-4 py-3.5">
         <Flame className="h-5 w-5 text-accent" strokeWidth={2.2} />
-        <span className="font-mono text-[12px] tracking-[0.18em] text-muted">TSJ11 · 大露營</span>
+        <span className="font-mono text-[12px] tracking-[0.18em] text-muted">TPSJ11 · 大露營</span>
       </div>
 
       <div className="px-3 pb-2">

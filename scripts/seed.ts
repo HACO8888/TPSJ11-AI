@@ -21,7 +21,7 @@ async function main() {
     const existing = await db.select().from(users).where(eq(users.username, "admin"));
 
     if (existing.length && !RESET) {
-      console.log("\n[seed] admin 已存在。若要重設密碼請執行: npm run db:seed -- --reset\n");
+      console.log("\n[seed] admin 已存在。若要重設密碼請執行: pnpm db:seed -- --reset\n");
       return;
     }
 
@@ -45,7 +45,7 @@ async function main() {
     console.log(`║  密碼  (password)  : ${password}`);
     console.log(`╠${line}╣`);
     console.log("║  ⚠ 此密碼只會顯示這一次，請立即妥善保存。");
-    console.log("║  ⚠ 若遺失，請執行: npm run db:seed -- --reset 重新產生。");
+    console.log("║  ⚠ 若遺失，請執行: pnpm db:seed -- --reset 重新產生。");
     console.log(`╚${line}╝\n`);
   } finally {
     await client.end({ timeout: 5 });
