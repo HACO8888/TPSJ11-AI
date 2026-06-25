@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export default function NotFound() {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
+    <main className="flex min-h-dvh-safe flex-col items-center justify-center px-6 text-center">
       <Flame className="mb-4 h-10 w-10 text-accent" strokeWidth={1.8} />
       <p className="font-mono text-sm tracking-[0.2em] text-muted">404</p>
       <h1 className="mt-2 font-display text-2xl font-semibold text-ink">找不到這個頁面</h1>

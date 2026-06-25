@@ -58,6 +58,33 @@
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
 }
 
+/*
+  Dynamic viewport height with a fallback for in-app browsers (LINE / FB / IG /
+  WeChat). Their WebViews resize the visible area as toolbars show/hide, so a
+  static `100vh` gets cut off at the bottom. `dvh` tracks that, but old WebViews
+  (iOS < 15.4) don't understand `dvh` and would drop the whole declaration,
+  collapsing the layout — so we declare `100vh` first as a fallback.
+*/
+@utility h-dvh-safe {
+  height: 100dvh;
+}
+@utility min-h-dvh-safe {
+  min-height: 100dvh;
+}
+/*
+  Wrapped in `@supports not` so Tailwind's Lightning CSS optimizer keeps the
+  fallback instead of pruning it as "redundant": old in-app WebViews that lack
+  `dvh` get `vh`, modern ones keep `dvh`.
+*/
+@supports not (height: 1dvh) {
+  .h-dvh-safe {
+    height: 100vh;
+  }
+  .min-h-dvh-safe {
+    min-height: 100vh;
+  }
+}
+
 @layer base {
   * {
     border-color: var(--line);
@@ -68,6 +95,7 @@
   body {
     background-color: var(--canvas);
     color: var(--ink);
+    overflow-x: hidden;
     font-family: var(--font-sans);
     font-feature-settings: "ss01";
     -webkit-font-smoothing: antialiased;

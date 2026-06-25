@@ -125,7 +125,7 @@ function UserMessage({
 
   return (
     <div>
-      <div className="inline-block max-w-full rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-1.5">
+      <div className="inline-block max-w-full break-words rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-1.5">
         {isImageReq && <ImageReqBadge />}
         <MarkdownRenderer content={shown} />
       </div>
@@ -187,7 +187,7 @@ export function MessageList({ messages, live, busy, onRegenerate }: Props) {
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="h-full overflow-y-auto overscroll-contain"
+        className="h-full overflow-y-auto overflow-x-hidden overscroll-contain"
         role="log"
         aria-live="polite"
         aria-relevant="additions"

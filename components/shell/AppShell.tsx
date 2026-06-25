@@ -16,9 +16,11 @@ import {
   useRenameSession,
   useSessions,
 } from "@/lib/hooks/useSessions";
+import { useViewportHeight } from "@/lib/hooks/useViewportHeight";
 import { TopBar } from "./TopBar";
 
 export function AppShell() {
+  useViewportHeight();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -106,7 +108,10 @@ export function AppShell() {
   const activeTitle = sessions.find((s) => s.id === activeId)?.title ?? "新對話";
 
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div
+      className="flex h-dvh-safe overflow-hidden"
+      style={{ height: "var(--app-height)" }}
+    >
       <aside className="hidden w-72 flex-none border-r border-line lg:block">
         <SessionSidebar {...sidebarProps} />
       </aside>

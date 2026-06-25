@@ -17,10 +17,13 @@ export default function GlobalError({
 
   return (
     <html lang="zh-Hant">
+      <head>
+        {/* `100vh` fallback first so old in-app WebViews (no `dvh`) still fill the screen. */}
+        <style>{`body{min-height:100vh;min-height:100dvh}`}</style>
+      </head>
       <body
         style={{
           display: "flex",
-          minHeight: "100dvh",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",

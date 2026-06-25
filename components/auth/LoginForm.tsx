@@ -25,7 +25,7 @@ export function LoginForm() {
   }
 
   return (
-    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden px-5">
+    <main className="relative flex min-h-dvh-safe items-center justify-center overflow-hidden px-5">
       {/* campfire ember glow */}
       <div
         aria-hidden

@@ -16,7 +16,7 @@ export default function ErrorPage({
   }, [error]);
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
+    <main className="flex min-h-dvh-safe flex-col items-center justify-center px-6 text-center">
       <Flame className="mb-4 h-10 w-10 text-accent" strokeWidth={1.8} />
       <h1 className="font-display text-2xl font-semibold text-ink">發生了一點狀況</h1>
       <p className="mt-2 max-w-sm text-sm text-muted">

@@ -53,9 +53,7 @@ export function Composer({ disabled, busy, onSend, onStop }: Props) {
             onKeyDown={onKey}
             rows={1}
             disabled={disabled || busy}
-            placeholder={
-              disabled ? "請先建立或選擇一個對話" : "輸入訊息…（Enter 送出，Shift+Enter 換行）"
-            }
+            placeholder={disabled ? "請先選擇對話" : "輸入訊息…"}
             className="max-h-[200px] min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-ink outline-none placeholder:text-muted disabled:opacity-60"
           />
           {busy ? (
