@@ -100,7 +100,8 @@ function UserMessage({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           rows={Math.min(8, Math.max(2, value.split("\n").length))}
-          className="w-full resize-none bg-transparent px-1.5 py-1 text-[15px] text-ink outline-none"
+          // ≥16px font keeps iOS / in-app browsers from auto-zooming on focus (see Composer).
+          className="w-full resize-none bg-transparent px-1.5 py-1 text-base text-ink outline-none"
         />
         <div className="mt-1 flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>

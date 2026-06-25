@@ -43,6 +43,12 @@ export function Composer({ disabled, busy, onSend, onStop }: Props) {
     <div className="flex-none border-t border-line bg-canvas/85 px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2.5 backdrop-blur sm:px-4">
       <div className="mx-auto w-full max-w-3xl">
         <div className="flex items-end gap-2 rounded-xl border border-line bg-surface p-2">
+          {/*
+            font-size must stay ≥ 16px: iOS Safari / in-app WebViews (FB / IG /
+            LINE) auto-zoom the whole page when focusing any field smaller than
+            16px and often don't zoom back out on blur, leaving the layout
+            scaled-up ("比例跑掉") until the user pinch-zooms out manually.
+          */}
           <textarea
             ref={ref}
             value={value}
@@ -54,7 +60,7 @@ export function Composer({ disabled, busy, onSend, onStop }: Props) {
             rows={1}
             disabled={disabled || busy}
             placeholder={disabled ? "請先選擇對話" : "輸入訊息…"}
-            className="max-h-[200px] min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-ink outline-none placeholder:text-muted disabled:opacity-60"
+            className="max-h-[200px] min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-base text-ink outline-none placeholder:text-muted disabled:opacity-60"
           />
           {busy ? (
             <Button variant="outline" size="icon" onClick={onStop} aria-label="停止生成">

@@ -39,7 +39,8 @@ export function SessionItem({ session, active, onSelect, onRename, onDelete }: P
               setEditing(false);
             }
           }}
-          className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none"
+          // ≥16px font keeps iOS / in-app browsers from auto-zooming on focus (see Composer).
+          className="min-w-0 flex-1 bg-transparent text-base text-ink outline-none"
         />
         <button type="button" onClick={commit} aria-label="確認">
           <Check size={15} className="text-brand" />

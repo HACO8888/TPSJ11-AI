@@ -22,7 +22,13 @@ export function useViewportHeight() {
     const vv = window.visualViewport;
 
     function set() {
-      const h = vv?.height ?? window.innerHeight;
+      // `visualViewport.height` is reported in *visual* CSS pixels, i.e. divided
+      // by the pinch-zoom scale. When the page is zoomed (e.g. iOS auto-zooms a
+      // small input then fails to reset on blur) this would otherwise collapse
+      // `--app-height` to a fraction of the screen and squash the layout. Multiply
+      // by `scale` to recover the layout height; it stays correct at scale 1, so
+      // the keyboard (which shrinks the viewport without zooming) is still tracked.
+      const h = vv ? vv.height * (vv.scale || 1) : window.innerHeight;
       root.style.setProperty("--app-height", `${Math.round(h)}px`);
     }
 
