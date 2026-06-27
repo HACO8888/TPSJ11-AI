@@ -1,10 +1,24 @@
 import "server-only";
-import { createImageMessage, loadContextRows, persistAssistant } from "@/db/queries";
-import { chatOnce, chatStream, generateImage } from "./aiClient";
+import {
+  createImageMessage,
+  getLatestGeneratedImage,
+  getMessageAttachments,
+  hasRecentImageMessage,
+  loadContextRows,
+  persistAssistant,
+} from "@/db/queries";
+import {
+  type ChatContent,
+  chatOnce,
+  chatStream,
+  generateImage,
+  generateImageEdit,
+  type ImageReference,
+} from "./aiClient";
 import { buildContext } from "./context";
 import { logError } from "./errors";
 import { HttpError } from "./http";
-import { classifyImageIntent, hasImageCue, isBareImageRequest } from "./intent";
+import { classifyImageIntent, hasImageCue, isBareImageRequest, isLikelyImageEdit } from "./intent";
 
 const IMAGE_PREFIX = "/image ";
 
@@ -60,16 +74,38 @@ export function buildGenerationStream(opts: {
         // Load the conversation once (used for routing context + the chat reply).
         const history = await loadContextRows(sessionId);
         const hasPriorContent = history.slice(0, -1).some((r) => r.role === "assistant");
+        // A recent generated image means a terse, cue-less follow-up ("卡通版的",
+        // "伸出貓爪") is probably an edit of that image — let the classifier decide.
+        const recentImage = await hasRecentImageMessage(sessionId);
+        // 素材: reference image(s) the user uploaded on this turn (also reloaded on
+        // regenerate, since they stay linked to the user message).
+        const attachments = await getMessageAttachments(userMessageId);
+        const hasAttachment = attachments.length > 0;
 
         // ---- Route: image vs chat ----
         let kind: "chat" | "image" = "chat";
         let imagePrompt = "";
+        let imageRef: ImageReference | null = null;
         let imageFallback = false;
         let vagueImage = false;
         if (forced && forcedPrompt) {
           kind = "image";
           imagePrompt = forcedPrompt;
-        } else if (hasImageCue(content)) {
+          if (hasAttachment) imageRef = attachments[0];
+        } else if (hasAttachment) {
+          // Uploaded 素材 → either transform it into a new image, or answer about it.
+          const verdict = await classifyImageIntent(content, history, upstreamAbort.signal, {
+            hasAttachment: true,
+          });
+          if (verdict.image && verdict.prompt) {
+            kind = "image";
+            imagePrompt = verdict.prompt;
+            imageRef = attachments[0];
+          }
+          // else → chat branch does vision Q&A over the attachment(s).
+        } else if (hasImageCue(content) || (recentImage && isLikelyImageEdit(content))) {
+          // The recentImage path only fires for short edit-looking follow-ups
+          // ("卡通版的", "換成藍色背景") — plain chat after an image stays instant.
           if (isBareImageRequest(content) && !hasPriorContent) {
             // First-turn "幫我畫" with nothing to draw — instant canned clarification.
             vagueImage = true;
@@ -80,6 +116,9 @@ export function buildGenerationStream(opts: {
             if (verdict.image && verdict.ready && verdict.prompt) {
               kind = "image";
               imagePrompt = verdict.prompt;
+              // A genuine edit of the previous image (however it's phrased) → reuse
+              // it as the reference for a faithful image-to-image edit.
+              if (verdict.edit && recentImage) imageRef = await getLatestGeneratedImage(sessionId);
             } else if (verdict.image) {
               vagueImage = true;
             }
@@ -103,10 +142,9 @@ export function buildGenerationStream(opts: {
         if (kind === "image") {
           controller.enqueue(sse("route", { kind: "image", prompt: imagePrompt }));
           try {
-            const { buf, mime, width, height } = await generateImage(
-              imagePrompt,
-              upstreamAbort.signal,
-            );
+            const { buf, mime, width, height } = imageRef
+              ? await generateImageEdit(imagePrompt, imageRef, upstreamAbort.signal)
+              : await generateImage(imagePrompt, upstreamAbort.signal);
             const { imageId, messageId } = await createImageMessage({
               sessionId,
               prompt: imagePrompt,
@@ -151,6 +189,24 @@ export function buildGenerationStream(opts: {
         // ---- Chat branch ----
         controller.enqueue(sse("route", { kind: "chat" }));
         const payload = buildContext(history);
+        // Vision: attach the current turn's uploaded image(s) to the last user
+        // message so the model can actually see them. Only this turn ships bytes;
+        // older turns keep the 〔使用者附上 N 張圖片〕 note from loadContextRows.
+        if (hasAttachment) {
+          const parts: ChatContent = [
+            { type: "text", text: content || "請看這張我上傳的圖片，並提供協助。" },
+            ...attachments.map((a) => ({
+              type: "image_url" as const,
+              image_url: { url: `data:${a.mime};base64,${a.bytes.toString("base64")}` },
+            })),
+          ];
+          for (let i = payload.length - 1; i >= 0; i--) {
+            if (payload[i].role === "user") {
+              payload[i] = { role: "user", content: parts };
+              break;
+            }
+          }
+        }
         if (imageFallback) {
           payload.push({
             role: "system",

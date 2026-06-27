@@ -16,6 +16,7 @@ export interface ChatMessageDTO {
   content: string;
   imageId: string | null;
   imageUrl: string | null;
+  attachments: { id: string; url: string }[];
   partial: boolean;
   usage: Record<string, unknown> | null;
   createdAt: string;

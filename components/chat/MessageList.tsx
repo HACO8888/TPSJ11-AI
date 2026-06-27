@@ -126,10 +126,28 @@ function UserMessage({
 
   return (
     <div>
-      <div className="inline-block max-w-full break-words rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-1.5">
-        {isImageReq && <ImageReqBadge />}
-        <MarkdownRenderer content={shown} />
-      </div>
+      {message.attachments.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap gap-1.5">
+          {message.attachments.map((a) => (
+            <a
+              key={a.id}
+              href={a.url}
+              target="_blank"
+              rel="noreferrer"
+              className="block h-20 w-20 overflow-hidden rounded-lg border border-line bg-surface-2"
+            >
+              {/* biome-ignore lint/performance/noImgElement: auth-gated dynamic BYTEA image, not optimizable by next/image */}
+              <img src={a.url} alt="附件圖片" className="h-full w-full object-cover" />
+            </a>
+          ))}
+        </div>
+      )}
+      {shown && (
+        <div className="inline-block max-w-full break-words rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-1.5">
+          {isImageReq && <ImageReqBadge />}
+          <MarkdownRenderer content={shown} />
+        </div>
+      )}
       <div className="mt-1 flex gap-1">
         <button
           type="button"

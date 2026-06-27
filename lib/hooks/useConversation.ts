@@ -16,6 +16,7 @@ interface RunOpts {
   userText?: string;
   truncateAfterId?: string;
   editedContent?: string;
+  files?: File[];
 }
 
 export function useConversation(sessionId: string | null) {
@@ -56,7 +57,16 @@ export function useConversation(sessionId: string | null) {
         // Show the working indicator immediately (the user row is already in the list).
         setLive({ userText: null, assistantText: "", image: null });
       } else {
-        setLive({ userText: opts.userText ?? null, assistantText: "", image: null });
+        // A files-only send has empty text; show a placeholder so the optimistic
+        // user row and the "working" indicator still appear during generation
+        // (otherwise a brand-new conversation would look empty for 10–30s).
+        const optimisticUser =
+          opts.userText && opts.userText.length > 0
+            ? opts.userText
+            : opts.files && opts.files.length > 0
+              ? "（已上傳圖片）"
+              : null;
+        setLive({ userText: optimisticUser, assistantText: "", image: null });
       }
 
       const ac = new AbortController();
@@ -64,12 +74,19 @@ export function useConversation(sessionId: string | null) {
       let streamErr: string | null = null;
 
       try {
-        const res = await fetch(`/api/sessions/${sessionId}/${endpoint}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: ac.signal,
-        });
+        // With 素材 attachments, send multipart (browser sets the boundary, so we
+        // must NOT set Content-Type ourselves); otherwise send JSON as before.
+        const init: RequestInit = { method: "POST", signal: ac.signal };
+        if (opts.files && opts.files.length > 0) {
+          const fd = new FormData();
+          fd.append("content", (body as { content?: string }).content ?? "");
+          for (const f of opts.files) fd.append("files", f);
+          init.body = fd;
+        } else {
+          init.headers = { "Content-Type": "application/json" };
+          init.body = JSON.stringify(body);
+        }
+        const res = await fetch(`/api/sessions/${sessionId}/${endpoint}`, init);
 
         if (res.status === 401) {
           window.location.href = "/login";
@@ -165,7 +182,7 @@ export function useConversation(sessionId: string | null) {
   );
 
   const send = useCallback(
-    (content: string) => run("chat", { content }, { userText: content }),
+    (content: string, files?: File[]) => run("chat", { content }, { userText: content, files }),
     [run],
   );
 

@@ -2,13 +2,15 @@ import "server-only";
 import { env } from "@/lib/env";
 import { HttpError } from "@/lib/http";
 
-export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+/** OpenAI-style multimodal content: a plain string, or text + image_url parts (vision). */
+export type ChatTextPart = { type: "text"; text: string };
+export type ChatImagePart = { type: "image_url"; image_url: { url: string } };
+export type ChatContent = string | Array<ChatTextPart | ChatImagePart>;
+export type ChatMessage = { role: "system" | "user" | "assistant"; content: ChatContent };
 
 const base = () => env.AI_API_BASE_URL.replace(/\/$/, "");
-const authHeaders = () => ({
-  Authorization: `Bearer ${env.AI_API_KEY}`,
-  "Content-Type": "application/json",
-});
+const bearer = () => ({ Authorization: `Bearer ${env.AI_API_KEY}` });
+const authHeaders = () => ({ ...bearer(), "Content-Type": "application/json" });
 
 /** Non-streaming chat — the fallback path when streaming is unavailable. */
 export async function chatOnce(messages: ChatMessage[], signal?: AbortSignal) {
@@ -63,17 +65,79 @@ export async function generateImage(prompt: string, signal?: AbortSignal): Promi
   return { buf, mime, width: dims?.width ?? null, height: dims?.height ?? null };
 }
 
+export interface ImageReference {
+  bytes: Buffer;
+  mime: string;
+}
+
+/**
+ * Image-to-image edit: transform a reference image per the prompt. Uses the
+ * gateway's multipart `/images/edits` (confirmed working via scripts/probe-image-edit.ts).
+ * Used for "把這張照片做成卡通版" and for follow-up edits of a generated image.
+ */
+export async function generateImageEdit(
+  prompt: string,
+  reference: ImageReference,
+  signal?: AbortSignal,
+): Promise<GeneratedImage> {
+  const ext =
+    reference.mime === "image/png"
+      ? "png"
+      : reference.mime === "image/webp"
+        ? "webp"
+        : reference.mime === "image/gif"
+          ? "gif"
+          : "jpg";
+  const fd = new FormData();
+  fd.append("model", env.AI_IMAGE_MODEL);
+  fd.append("prompt", prompt);
+  fd.append(
+    "image",
+    new Blob([new Uint8Array(reference.bytes)], { type: reference.mime }),
+    `reference.${ext}`,
+  );
+  // No Content-Type header — fetch sets the multipart boundary itself.
+  const r = await fetch(`${base()}/images/edits`, {
+    method: "POST",
+    headers: bearer(),
+    signal,
+    body: fd,
+  }).catch(networkError);
+  if (!r.ok) throw await upstreamError(r);
+  const j = await r.json();
+  const b64 = j?.data?.[0]?.b64_json as string | undefined;
+  if (!b64) throw new HttpError(502, "UPSTREAM_BAD", "圖片產生失敗");
+  const buf = Buffer.from(b64, "base64");
+  const mime = sniffMime(buf);
+  const dims = imageSize(buf);
+  return { buf, mime, width: dims?.width ?? null, height: dims?.height ?? null };
+}
+
 /* --------------------------------- helpers ------------------------------------- */
 
-function sniffMime(b: Buffer): string {
+export function sniffMime(b: Buffer): string {
   if (b[0] === 0xff && b[1] === 0xd8) return "image/jpeg";
   if (b[0] === 0x89 && b[1] === 0x50) return "image/png";
-  if (b[0] === 0x47 && b[1] === 0x49) return "image/gif";
-  if (b[0] === 0x52 && b[1] === 0x49) return "image/webp";
+  // GIF: "GIF8" (GIF87a / GIF89a).
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return "image/gif";
+  // WebP: "RIFF"…"WEBP" — must check the WEBP tag at offset 8, else any RIFF
+  // container (WAV/AVI) would be misread as an image.
+  if (
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 &&
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50
+  ) {
+    return "image/webp";
+  }
   return "application/octet-stream";
 }
 
-function imageSize(b: Buffer): { width: number; height: number } | null {
+export function imageSize(b: Buffer): { width: number; height: number } | null {
   // PNG: width/height in the IHDR chunk.
   if (b[0] === 0x89 && b[1] === 0x50) {
     return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };

@@ -24,7 +24,9 @@ export function AppShell() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<{ text: string; files?: File[] } | null>(
+    null,
+  );
 
   const sessionsQ = useSessions();
   const sessions = sessionsQ.data ?? [];
@@ -50,20 +52,20 @@ export function AppShell() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: fire once the new session id + queued message are both ready
   useEffect(() => {
     if (activeId && pendingMessage) {
-      convo.send(pendingMessage);
+      convo.send(pendingMessage.text, pendingMessage.files);
       setPendingMessage(null);
     }
   }, [activeId, pendingMessage]);
 
-  async function handleSend(text: string) {
+  async function handleSend(text: string, files?: File[]) {
     if (activeId) {
-      convo.send(text);
+      convo.send(text, files);
       return;
     }
     // Lazy create: only record a session once there is a message.
     const s = await createM.mutateAsync(undefined);
     setActive(s.id);
-    setPendingMessage(text);
+    setPendingMessage({ text, files });
   }
 
   function handleNew() {
@@ -108,10 +110,7 @@ export function AppShell() {
   const activeTitle = sessions.find((s) => s.id === activeId)?.title ?? "新對話";
 
   return (
-    <div
-      className="flex h-dvh-safe overflow-hidden"
-      style={{ height: "var(--app-height)" }}
-    >
+    <div className="flex h-dvh-safe overflow-hidden" style={{ height: "var(--app-height)" }}>
       <aside className="hidden w-72 flex-none border-r border-line lg:block">
         <SessionSidebar {...sidebarProps} />
       </aside>

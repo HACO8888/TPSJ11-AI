@@ -6,7 +6,8 @@
 
 - 🔥 **多 session 對話**：建立／重新命名／刪除對話，每個 session 各自獨立記憶。
 - 💬 **串流回覆**：SSE 逐字顯示，像 ChatGPT。
-- 🖼️ **圖片生成**：在對話中以「生圖」模式產生圖片，存於 PostgreSQL（BYTEA）。
+- 🖼️ **圖片生成**：在對話中以「生圖」模式產生圖片，存於 PostgreSQL（BYTEA）。生成後直接說「卡通版的」「換背景」即可接續編修（image-to-image）。
+- 📎 **加入素材**：輸入框按「＋」上傳圖片，可請 AI 看圖回答（vision），或把圖改造成新風格／新圖（image-to-image，走 gateway 的 `/images/edits`）。每檔上限 8MB、最多 4 張。
 - 🔐 **簡易登入**：單一管理者 `admin`，密碼隨機產生、bcrypt 雜湊儲存、明文僅於 seed 時顯示一次。
 - 🌗 淺／深色主題、桌機／手機 RWD。
 

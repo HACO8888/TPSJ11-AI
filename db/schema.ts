@@ -71,6 +71,10 @@ export const images = pgTable(
     messageId: uuid("message_id").references((): AnyPgColumn => messages.id, {
       onDelete: "cascade",
     }),
+    // 'generated' = produced by the image model; 'uploaded' = user-supplied 素材
+    // (reference image). Uploaded rows hang off a user message; generated rows
+    // off an assistant image message.
+    source: text("source").notNull().default("generated"),
     mime: text("mime").notNull(),
     bytes: bytea("bytes").notNull(),
     byteLen: integer("byte_len").notNull(),
