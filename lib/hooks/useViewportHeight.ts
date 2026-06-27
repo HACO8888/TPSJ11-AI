@@ -30,6 +30,11 @@ export function useViewportHeight() {
       // the keyboard (which shrinks the viewport without zooming) is still tracked.
       const h = vv ? vv.height * (vv.scale || 1) : window.innerHeight;
       root.style.setProperty("--app-height", `${Math.round(h)}px`);
+      // How far the *visible* (visual) viewport has scrolled within the layout
+      // viewport. iOS scrolls the layout when the keyboard opens; pinning the app
+      // container to this offset keeps it glued to the visible area (composer right
+      // above the keyboard) instead of being left at the top with an empty gap.
+      root.style.setProperty("--app-top", `${Math.round(vv?.offsetTop ?? 0)}px`);
     }
 
     set();

@@ -110,7 +110,10 @@ export function AppShell() {
   const activeTitle = sessions.find((s) => s.id === activeId)?.title ?? "新對話";
 
   return (
-    <div className="flex h-dvh-safe overflow-hidden" style={{ height: "var(--app-height)" }}>
+    <div
+      className="fixed inset-x-0 flex h-dvh-safe overflow-hidden"
+      style={{ top: "var(--app-top, 0px)", height: "var(--app-height)" }}
+    >
       <aside className="hidden w-72 flex-none border-r border-line lg:block">
         <SessionSidebar {...sidebarProps} />
       </aside>
