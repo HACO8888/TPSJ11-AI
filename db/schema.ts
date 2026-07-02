@@ -11,13 +11,18 @@ import {
 } from "drizzle-orm/pg-core";
 import { bytea } from "./bytea";
 
-/** Single admin user. Password is bcrypt-hashed; plaintext only ever shown at seed time. */
+/** A login account. Password is bcrypt-hashed; plaintext only ever shown at seed time. */
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   // UI theme preference, synced across devices for the account. 'light' | 'dark'.
   theme: text("theme").notNull().default("light"),
+  // May attach 素材 (reference images) via the composer "+" button.
+  canUpload: boolean("can_upload").notNull().default(false),
+  // Cloud-save target: the Drive folder id this account's images are saved under.
+  // Null → the default folder (app_settings.google_drive.tmpFolderId).
+  saveFolderId: text("save_folder_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -119,7 +124,8 @@ export const errorLogs = pgTable(
  */
 export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),
-  value: jsonb("value").$type<Record<string, unknown>>().notNull(),
+  // Arbitrary JSON blob (object or array) — typed per key by the settings helpers.
+  value: jsonb("value").$type<unknown>().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

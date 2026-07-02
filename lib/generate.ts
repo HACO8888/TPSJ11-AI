@@ -108,6 +108,7 @@ export function buildGenerationStream(opts: {
               session,
               images: imgs.map((i) => ({ mime: i.mime, bytes: i.bytes })),
               baseName: resolveSaveBaseName(content),
+              baseFolderId: session.saveFolderId ?? undefined,
             });
             const list = result.files.map((f) => `・${f.name}`).join("\n");
             await reply(

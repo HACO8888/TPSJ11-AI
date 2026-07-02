@@ -1,6 +1,6 @@
 "use client";
 
-import { Flame, Plus } from "lucide-react";
+import { Flame, Plus, Shield } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import type { SessionMeta } from "@/lib/types";
@@ -10,6 +10,7 @@ interface Props {
   sessions: SessionMeta[];
   loading: boolean;
   username: string | null;
+  isAdmin: boolean;
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -21,6 +22,7 @@ export function SessionSidebar({
   sessions,
   loading,
   username,
+  isAdmin,
   activeId,
   onSelect,
   onNew,
@@ -67,7 +69,19 @@ export function SessionSidebar({
         <span className="min-w-0 truncate px-2 py-1.5 text-sm font-medium text-ink">
           {username ?? ""}
         </span>
-        <ThemeToggle />
+        <div className="flex items-center gap-1">
+          {isAdmin && (
+            <a
+              href="/admin"
+              aria-label="管理後台"
+              title="管理後台"
+              className="rounded-md p-2 text-muted hover:bg-surface-2 hover:text-ink"
+            >
+              <Shield size={18} />
+            </a>
+          )}
+          <ThemeToggle />
+        </div>
       </div>
     </div>
   );

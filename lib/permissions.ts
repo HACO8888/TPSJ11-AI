@@ -1,12 +1,27 @@
 import "server-only";
+import { getUserById } from "@/db/queries";
+import { requireAuth } from "@/lib/auth/session";
+import { HttpError } from "@/lib/http";
 
 /**
- * Accounts allowed to upload 素材 (reference images) via the composer's "+" button.
- * Server-authoritative: the client never sees this list, only a computed `canUpload`
- * boolean from /api/auth/me, and the chat upload endpoint re-checks it server-side.
+ * The single admin account. Hardcoded (not DB-configurable) so the admin can never
+ * be locked out of the admin panel by an accidental settings change.
+ *
+ * Per-account upload / cloud-save-folder permissions now live on the users row
+ * (users.canUpload / users.saveFolderId), managed from the admin panel — not here.
  */
-const IMAGE_UPLOAD_USERNAMES = new Set(["AH031", "AH044", "AH008", "AH068", "haco"]);
+const ADMIN_USERNAME = "haco";
 
-export function canUploadImages(username: string | null | undefined): boolean {
-  return typeof username === "string" && IMAGE_UPLOAD_USERNAMES.has(username);
+export function isAdmin(username: string | null | undefined): boolean {
+  return username === ADMIN_USERNAME;
+}
+
+/** Require the caller to be the admin; returns their id/username. Throws 403 otherwise. */
+export async function requireAdmin(): Promise<{ uid: string; username: string }> {
+  const uid = await requireAuth();
+  const user = await getUserById(uid);
+  if (!user || !isAdmin(user.username)) {
+    throw new HttpError(403, "FORBIDDEN", "沒有權限");
+  }
+  return { uid, username: user.username };
 }

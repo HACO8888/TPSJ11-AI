@@ -1,8 +1,9 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { getSetting, setSessionDriveFolder } from "@/db/queries";
+import { getSetting, setSessionDriveFolder, setSetting } from "@/db/queries";
 import { HttpError } from "./http";
 import { compressForCloud } from "./imageCompress";
+import type { Team } from "./types";
 
 /**
  * Google Drive uploader (OAuth, folder owner's account).
@@ -197,10 +198,13 @@ function folderNameForSession(session: SessionLike): string {
   return cleaned && cleaned !== "新對話" ? cleaned : `對話-${session.id.slice(0, 8)}`;
 }
 
-async function ensureSessionFolder(token: string, session: SessionLike): Promise<string> {
+async function ensureSessionFolder(
+  token: string,
+  session: SessionLike,
+  baseFolderId: string,
+): Promise<string> {
   if (session.driveFolderId) return session.driveFolderId;
-  const cfg = await loadConfig();
-  const id = await createFolder(token, cfg.tmpFolderId, folderNameForSession(session));
+  const id = await createFolder(token, baseFolderId, folderNameForSession(session));
   await setSessionDriveFolder(session.id, id);
   return id;
 }
@@ -226,24 +230,64 @@ export interface CloudSaveResult {
 /** Which rendition(s) to upload: the original bytes, a compressed ≤2MB JPEG, or both. */
 export type CloudSaveVariant = "original" | "small" | "both";
 
+// Per-team folders are shared across sessions/saves, so we remember each one's id
+// (drive.file can't search for it later) in an app_settings map keyed by base+code.
+const TEAM_FOLDERS_KEY = "drive_team_folders";
+
+async function ensureTeamFolder(token: string, baseFolderId: string, team: Team): Promise<string> {
+  const key = `${baseFolderId}:${team.code}`;
+  const map = (await getSetting<Record<string, string>>(TEAM_FOLDERS_KEY)) ?? {};
+  if (map[key]) return map[key];
+  const id = await createFolder(token, baseFolderId, `${team.code} ${team.name}`);
+  map[key] = id;
+  await setSetting(TEAM_FOLDERS_KEY, map);
+  return id;
+}
+
+// Taipei-local "YYYYMMDD-HHmmss" — disambiguates repeated saves into one team folder.
+function stamp(): string {
+  const parts = new Intl.DateTimeFormat("zh-TW", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}${g("month")}${g("day")}-${g("hour")}${g("minute")}${g("second")}`;
+}
+
 /**
- * Upload every given image into the session's own Drive folder (created on first
- * use). Files are named `${baseName}_${n}.${ext}` with n running 1..N in the order
- * given (callers pass oldest → newest). `variant` picks original / 小 size / both;
- * for "both" the small one gets a `_小.jpg` suffix. Throws HttpError on any failure.
+ * Upload every given image to Drive. With `team`, files go into that team's shared
+ * folder (`{code} {name}/`) named `${code}-${timestamp}_${n}`; otherwise into the
+ * session's own folder named `${baseName}_${n}`. `variant` picks original / 小 size
+ * / both (the small one gets a `_小.jpg` suffix). Throws HttpError on any failure.
  */
 export async function saveSessionImagesToCloud(params: {
   session: SessionLike;
   images: { mime: string; bytes: Buffer }[];
   baseName: string;
   variant?: CloudSaveVariant;
+  /** Folder to create the session/team subfolder under; defaults to config.tmpFolderId. */
+  baseFolderId?: string;
+  /** When set, save into this team's shared folder instead of the session folder. */
+  team?: Team;
 }): Promise<CloudSaveResult> {
-  const { session, images, baseName, variant = "original" } = params;
+  const { session, images, baseName, variant = "original", baseFolderId, team } = params;
   if (images.length === 0) {
     throw new HttpError(400, "NO_IMAGES", "這個對話還沒有生成過圖片");
   }
+  const cfg = await loadConfig();
   const token = await getAccessToken();
-  const folderId = await ensureSessionFolder(token, session);
+  const base = baseFolderId ?? cfg.tmpFolderId;
+
+  const folderId = team
+    ? await ensureTeamFolder(token, base, team)
+    : await ensureSessionFolder(token, session, base);
+  const fileBase = team ? `${team.code}-${stamp()}` : baseName;
 
   const files: SavedFile[] = [];
   for (let i = 0; i < images.length; i++) {
@@ -251,13 +295,13 @@ export async function saveSessionImagesToCloud(params: {
     const n = i + 1;
 
     if (variant !== "small") {
-      const name = `${baseName}_${n}.${extFromMime(img.mime)}`;
+      const name = `${fileBase}_${n}.${extFromMime(img.mime)}`;
       const up = await uploadFile(token, folderId, name, img.mime, img.bytes);
       files.push({ name: up.name || name, link: up.webViewLink });
     }
     if (variant !== "original") {
       const small = await compressForCloud(img.bytes);
-      const name = `${baseName}_${n}${variant === "both" ? "_小" : ""}.jpg`;
+      const name = `${fileBase}_${n}${variant === "both" ? "_小" : ""}.jpg`;
       const up = await uploadFile(token, folderId, name, small.mime, small.bytes);
       files.push({ name: up.name || name, link: up.webViewLink });
     }

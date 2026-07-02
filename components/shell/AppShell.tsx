@@ -3,6 +3,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { CloudSaveDialog } from "@/components/chat/CloudSaveDialog";
 import { Composer } from "@/components/chat/Composer";
 import { MessageList } from "@/components/chat/MessageList";
 import { SessionSidebar } from "@/components/sidebar/SessionSidebar";
@@ -41,6 +42,7 @@ export function AppShell() {
 
   // Cloud save (server-side upload of this session's generated images to Drive).
   const [cloudSaving, setCloudSaving] = useState(false);
+  const [cloudDialogOpen, setCloudDialogOpen] = useState(false);
   const [cloudMsg, setCloudMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const hasGeneratedImage = convo.messages.some((m) => m.kind === "image" && !!m.imageId);
 
@@ -106,7 +108,7 @@ export function AppShell() {
     setPendingDelete(null);
   }
 
-  async function handleCloudSave(size: CloudSaveSize) {
+  async function handleCloudSave(teamCode: string, size: CloudSaveSize) {
     if (!activeId || cloudSaving) return;
     setCloudSaving(true);
     setCloudMsg(null);
@@ -114,8 +116,9 @@ export function AppShell() {
       const r = await apiSend<{ data: { count: number; folderLink: string } }>(
         `/api/sessions/${activeId}/cloud-save`,
         "POST",
-        { size },
+        { size, teamCode },
       );
+      setCloudDialogOpen(false);
       setCloudMsg({ ok: true, text: `已將 ${r.data.count} 個檔案儲存到雲端 ☁️` });
     } catch (e) {
       setCloudMsg({
@@ -131,6 +134,7 @@ export function AppShell() {
     sessions,
     loading: sessionsQ.isLoading,
     username: meQ.data?.username ?? null,
+    isAdmin: meQ.data?.isAdmin ?? false,
     activeId,
     onSelect: handleSelect,
     onNew: handleNew,
@@ -180,7 +184,7 @@ export function AppShell() {
             onOpenSidebar={() => setSheetOpen(true)}
             canCloudSave={!!activeId && hasGeneratedImage && !busy}
             cloudSaving={cloudSaving}
-            onCloudSave={handleCloudSave}
+            onCloudSaveOpen={() => setCloudDialogOpen(true)}
           />
 
           {convo.error && (
@@ -230,6 +234,13 @@ export function AppShell() {
           description="此操作無法復原，對話內的訊息與圖片都會一併刪除。"
           confirmLabel="刪除"
           onConfirm={confirmDelete}
+        />
+
+        <CloudSaveDialog
+          open={cloudDialogOpen}
+          onOpenChange={setCloudDialogOpen}
+          saving={cloudSaving}
+          onConfirm={handleCloudSave}
         />
       </div>
     </ThemeProvider>

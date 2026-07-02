@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "./index";
-import { appSettings, images, messages, sessions, users } from "./schema";
+import { appSettings, errorLogs, images, messages, sessions, users } from "./schema";
 
 /* ------------------------------------ users ------------------------------------ */
 
@@ -12,7 +12,13 @@ export async function getUserByUsername(username: string) {
 
 export async function getUserById(id: string) {
   const [row] = await db
-    .select({ id: users.id, username: users.username, theme: users.theme })
+    .select({
+      id: users.id,
+      username: users.username,
+      theme: users.theme,
+      canUpload: users.canUpload,
+      saveFolderId: users.saveFolderId,
+    })
     .from(users)
     .where(eq(users.id, id))
     .limit(1);
@@ -439,13 +445,23 @@ export interface SessionRow {
   id: string;
   title: string;
   driveFolderId: string | null;
+  /** Owner's username / cloud-save target folder — routes the save to the right place. */
+  username: string | null;
+  saveFolderId: string | null;
 }
 
 /** Session by id alone (ownership already checked upstream) — for the cloud-save flow. */
 export async function getSessionRow(sessionId: string): Promise<SessionRow | null> {
   const [row] = await db
-    .select({ id: sessions.id, title: sessions.title, driveFolderId: sessions.driveFolderId })
+    .select({
+      id: sessions.id,
+      title: sessions.title,
+      driveFolderId: sessions.driveFolderId,
+      username: users.username,
+      saveFolderId: users.saveFolderId,
+    })
     .from(sessions)
+    .leftJoin(users, eq(users.id, sessions.userId))
     .where(eq(sessions.id, sessionId))
     .limit(1);
   return row ?? null;
@@ -461,8 +477,8 @@ export async function setSessionDriveFolder(
 
 /* ---------------------------------- settings ----------------------------------- */
 
-/** Read a runtime setting blob (e.g. the Google Drive config). */
-export async function getSetting<T = Record<string, unknown>>(key: string): Promise<T | null> {
+/** Read a runtime setting blob (e.g. the Google Drive config or team list). */
+export async function getSetting<T = unknown>(key: string): Promise<T | null> {
   const [row] = await db
     .select({ value: appSettings.value })
     .from(appSettings)
@@ -471,10 +487,171 @@ export async function getSetting<T = Record<string, unknown>>(key: string): Prom
   return (row?.value as T | undefined) ?? null;
 }
 
-/** Upsert a runtime setting blob. */
-export async function setSetting(key: string, value: Record<string, unknown>): Promise<void> {
+/** Upsert a runtime setting blob (object or array). */
+export async function setSetting(key: string, value: unknown): Promise<void> {
   await db
     .insert(appSettings)
     .values({ key, value, updatedAt: new Date() })
     .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
+}
+
+/** All settings (admin: generic key-value editor). */
+export async function listSettings(): Promise<{ key: string; value: unknown; updatedAt: Date }[]> {
+  return db
+    .select({ key: appSettings.key, value: appSettings.value, updatedAt: appSettings.updatedAt })
+    .from(appSettings)
+    .orderBy(asc(appSettings.key));
+}
+
+/** Delete a setting key (admin). */
+export async function deleteSetting(key: string): Promise<void> {
+  await db.delete(appSettings).where(eq(appSettings.key, key));
+}
+
+/* ------------------------------- admin: accounts ------------------------------- */
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  canUpload: boolean;
+  saveFolderId: string | null;
+  createdAt: Date;
+  sessionCount: number;
+}
+
+export async function listUsers(): Promise<AdminUser[]> {
+  return db
+    .select({
+      id: users.id,
+      username: users.username,
+      canUpload: users.canUpload,
+      saveFolderId: users.saveFolderId,
+      createdAt: users.createdAt,
+      sessionCount: sql<number>`count(${sessions.id})::int`,
+    })
+    .from(users)
+    .leftJoin(sessions, eq(sessions.userId, users.id))
+    .groupBy(users.id)
+    .orderBy(asc(users.username));
+}
+
+export async function createUserRow(
+  username: string,
+  passwordHash: string,
+  opts?: { canUpload?: boolean; saveFolderId?: string | null },
+): Promise<{ id: string }> {
+  const [row] = await db
+    .insert(users)
+    .values({
+      username,
+      passwordHash,
+      canUpload: opts?.canUpload ?? false,
+      saveFolderId: opts?.saveFolderId ?? null,
+    })
+    .returning({ id: users.id });
+  return row;
+}
+
+export async function updateUserFlags(
+  id: string,
+  flags: { canUpload?: boolean; saveFolderId?: string | null },
+): Promise<void> {
+  const set: Partial<{ canUpload: boolean; saveFolderId: string | null; updatedAt: Date }> = {
+    updatedAt: new Date(),
+  };
+  if (flags.canUpload !== undefined) set.canUpload = flags.canUpload;
+  if (flags.saveFolderId !== undefined) set.saveFolderId = flags.saveFolderId;
+  await db.update(users).set(set).where(eq(users.id, id));
+}
+
+export async function setUserPassword(id: string, passwordHash: string): Promise<void> {
+  await db.update(users).set({ passwordHash, updatedAt: new Date() }).where(eq(users.id, id));
+}
+
+export async function deleteUserById(id: string): Promise<void> {
+  await db.delete(users).where(eq(users.id, id));
+}
+
+/* --------------------------------- admin: data --------------------------------- */
+
+export interface AdminSession {
+  id: string;
+  title: string;
+  username: string | null;
+  messageCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export async function listAllSessions(): Promise<AdminSession[]> {
+  return db
+    .select({
+      id: sessions.id,
+      title: sessions.title,
+      username: users.username,
+      messageCount: sql<number>`count(${messages.id})::int`,
+      createdAt: sessions.createdAt,
+      updatedAt: sessions.updatedAt,
+    })
+    .from(sessions)
+    .leftJoin(users, eq(users.id, sessions.userId))
+    .leftJoin(messages, eq(messages.sessionId, sessions.id))
+    .groupBy(sessions.id, users.username)
+    .orderBy(desc(sessions.updatedAt));
+}
+
+export async function deleteSessionById(id: string): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.id, id));
+}
+
+export interface AdminImage {
+  id: string;
+  sessionId: string;
+  source: string;
+  mime: string;
+  byteLen: number;
+  width: number | null;
+  height: number | null;
+  prompt: string | null;
+  createdAt: Date;
+}
+
+export async function listImagesMeta(limit = 300): Promise<AdminImage[]> {
+  return db
+    .select({
+      id: images.id,
+      sessionId: images.sessionId,
+      source: images.source,
+      mime: images.mime,
+      byteLen: images.byteLen,
+      width: images.width,
+      height: images.height,
+      prompt: images.prompt,
+      createdAt: images.createdAt,
+    })
+    .from(images)
+    .orderBy(desc(images.createdAt))
+    .limit(limit);
+}
+
+export async function deleteImageById(id: string): Promise<void> {
+  await db.delete(images).where(eq(images.id, id));
+}
+
+export async function listErrorLogsAdmin(limit = 200) {
+  return db.select().from(errorLogs).orderBy(desc(errorLogs.createdAt)).limit(limit);
+}
+
+export async function deleteErrorLogById(id: string): Promise<void> {
+  await db.delete(errorLogs).where(eq(errorLogs.id, id));
+}
+
+/** Row counts for the admin dashboard. */
+export async function adminCounts(): Promise<Record<string, number>> {
+  const one = async (t: typeof users | typeof sessions | typeof messages | typeof images) => {
+    const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(t);
+    return r?.n ?? 0;
+  };
+  const [u, s, m, i] = await Promise.all([one(users), one(sessions), one(messages), one(images)]);
+  return { users: u, sessions: s, messages: m, images: i };
 }
