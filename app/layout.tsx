@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { cookies } from "next/headers";
 import type { ReactNode } from "react";
-import { THEME_COOKIE } from "@/lib/theme-cookie";
+import { resolveSsrTheme } from "@/lib/theme-cookie";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -30,9 +29,10 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  // Read the theme cookie server-side so the correct palette class is on <html>
-  // in the very first byte of HTML — no flash, no client script needed.
-  const dark = (await cookies()).get(THEME_COOKIE)?.value === "dark";
+  // Resolve the palette server-side (cookie, or DB fallback via the session) so
+  // the correct class is on <html> in the very first byte of HTML — no flash,
+  // no client script needed, even for users who predate the theme cookie.
+  const dark = (await resolveSsrTheme()) === "dark";
 
   return (
     <html lang="zh-Hant" className={dark ? "dark" : undefined} suppressHydrationWarning>
