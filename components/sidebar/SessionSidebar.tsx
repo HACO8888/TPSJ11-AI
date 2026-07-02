@@ -9,6 +9,7 @@ import { SessionItem } from "./SessionItem";
 interface Props {
   sessions: SessionMeta[];
   loading: boolean;
+  username: string | null;
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -20,6 +21,7 @@ interface Props {
 export function SessionSidebar({
   sessions,
   loading,
+  username,
   activeId,
   onSelect,
   onNew,
@@ -69,7 +71,7 @@ export function SessionSidebar({
           onClick={onLogout}
           className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink"
         >
-          <LogOut size={15} /> 登出 admin
+          <LogOut size={15} /> 登出{username ? ` ${username}` : ""}
         </button>
         <ThemeToggle />
       </div>

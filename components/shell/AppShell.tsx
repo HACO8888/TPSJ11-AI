@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { apiSend } from "@/lib/api/client";
 import { useConversation } from "@/lib/hooks/useConversation";
+import { useMe } from "@/lib/hooks/useMe";
 import {
   useCreateSession,
   useDeleteSession,
@@ -34,6 +35,7 @@ export function AppShell() {
   const renameM = useRenameSession();
   const deleteM = useDeleteSession();
   const convo = useConversation(activeId);
+  const meQ = useMe();
 
   // Restore a deep-linked session from the URL. Otherwise the default is a fresh,
   // unsaved conversation — a session is only created on the first message, so
@@ -98,6 +100,7 @@ export function AppShell() {
   const sidebarProps = {
     sessions,
     loading: sessionsQ.isLoading,
+    username: meQ.data?.username ?? null,
     activeId,
     onSelect: handleSelect,
     onNew: handleNew,

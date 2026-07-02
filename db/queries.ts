@@ -10,6 +10,15 @@ export async function getUserByUsername(username: string) {
   return row ?? null;
 }
 
+export async function getUserById(id: string) {
+  const [row] = await db
+    .select({ id: users.id, username: users.username })
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
 /* ----------------------------------- sessions ---------------------------------- */
 
 export interface SessionMeta {
