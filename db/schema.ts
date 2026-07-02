@@ -16,6 +16,8 @@ export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  // UI theme preference, synced across devices for the account. 'light' | 'dark'.
+  theme: text("theme").notNull().default("light"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

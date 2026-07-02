@@ -22,6 +22,13 @@
       "when": 1782577900333,
       "tag": "0002_mighty_victor_mancha",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782979849290,
+      "tag": "0003_curvy_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

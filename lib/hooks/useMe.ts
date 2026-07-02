@@ -3,9 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api/client";
 
-interface Me {
+export interface Me {
   authenticated: boolean;
   username: string | null;
+  theme: "light" | "dark" | null;
 }
 
 export function useMe() {

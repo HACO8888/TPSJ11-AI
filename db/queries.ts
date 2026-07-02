@@ -12,11 +12,15 @@ export async function getUserByUsername(username: string) {
 
 export async function getUserById(id: string) {
   const [row] = await db
-    .select({ id: users.id, username: users.username })
+    .select({ id: users.id, username: users.username, theme: users.theme })
     .from(users)
     .where(eq(users.id, id))
     .limit(1);
   return row ?? null;
+}
+
+export async function updateUserTheme(id: string, theme: "light" | "dark") {
+  await db.update(users).set({ theme, updatedAt: new Date() }).where(eq(users.id, id));
 }
 
 /* ----------------------------------- sessions ---------------------------------- */

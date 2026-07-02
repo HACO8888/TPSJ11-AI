@@ -1,6 +1,6 @@
 "use client";
 
-import { Flame, LogOut, Plus } from "lucide-react";
+import { Flame, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import type { SessionMeta } from "@/lib/types";
@@ -15,7 +15,6 @@ interface Props {
   onNew: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
-  onLogout: () => void;
 }
 
 export function SessionSidebar({
@@ -27,7 +26,6 @@ export function SessionSidebar({
   onNew,
   onRename,
   onDelete,
-  onLogout,
 }: Props) {
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -66,13 +64,9 @@ export function SessionSidebar({
       </nav>
 
       <div className="flex items-center justify-between border-t border-line px-3 py-2.5">
-        <button
-          type="button"
-          onClick={onLogout}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink"
-        >
-          <LogOut size={15} /> 登出{username ? ` ${username}` : ""}
-        </button>
+        <span className="min-w-0 truncate px-2 py-1.5 text-sm font-medium text-ink">
+          {username ?? ""}
+        </span>
         <ThemeToggle />
       </div>
     </div>
