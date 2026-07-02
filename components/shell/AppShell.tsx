@@ -19,6 +19,7 @@ import {
   useSessions,
 } from "@/lib/hooks/useSessions";
 import { useViewportHeight } from "@/lib/hooks/useViewportHeight";
+import type { CloudSaveSize } from "@/lib/types";
 import { TopBar } from "./TopBar";
 
 export function AppShell() {
@@ -105,7 +106,7 @@ export function AppShell() {
     setPendingDelete(null);
   }
 
-  async function handleCloudSave() {
+  async function handleCloudSave(size: CloudSaveSize) {
     if (!activeId || cloudSaving) return;
     setCloudSaving(true);
     setCloudMsg(null);
@@ -113,8 +114,9 @@ export function AppShell() {
       const r = await apiSend<{ data: { count: number; folderLink: string } }>(
         `/api/sessions/${activeId}/cloud-save`,
         "POST",
+        { size },
       );
-      setCloudMsg({ ok: true, text: `已將 ${r.data.count} 張圖片儲存到雲端 ☁️` });
+      setCloudMsg({ ok: true, text: `已將 ${r.data.count} 個檔案儲存到雲端 ☁️` });
     } catch (e) {
       setCloudMsg({
         ok: false,

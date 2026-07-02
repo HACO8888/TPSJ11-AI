@@ -22,6 +22,9 @@ export interface ChatMessageDTO {
   createdAt: string;
 }
 
+/** Which rendition(s) to cloud-save: original bytes, a compressed ≤2MB JPEG, or both. */
+export type CloudSaveSize = "original" | "small" | "both";
+
 /** Local-only message used for optimistic rendering before the server confirms. */
 export interface PendingImage {
   id: string;

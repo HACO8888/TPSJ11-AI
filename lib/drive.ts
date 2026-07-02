@@ -2,6 +2,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { getSetting, setSessionDriveFolder } from "@/db/queries";
 import { HttpError } from "./http";
+import { compressForCloud } from "./imageCompress";
 
 /**
  * Google Drive uploader (OAuth, folder owner's account).
@@ -222,17 +223,22 @@ export interface CloudSaveResult {
   folderLink: string;
 }
 
+/** Which rendition(s) to upload: the original bytes, a compressed ≤2MB JPEG, or both. */
+export type CloudSaveVariant = "original" | "small" | "both";
+
 /**
  * Upload every given image into the session's own Drive folder (created on first
  * use). Files are named `${baseName}_${n}.${ext}` with n running 1..N in the order
- * given (callers pass oldest → newest). Throws HttpError on any failure.
+ * given (callers pass oldest → newest). `variant` picks original / 小 size / both;
+ * for "both" the small one gets a `_小.jpg` suffix. Throws HttpError on any failure.
  */
 export async function saveSessionImagesToCloud(params: {
   session: SessionLike;
   images: { mime: string; bytes: Buffer }[];
   baseName: string;
+  variant?: CloudSaveVariant;
 }): Promise<CloudSaveResult> {
-  const { session, images, baseName } = params;
+  const { session, images, baseName, variant = "original" } = params;
   if (images.length === 0) {
     throw new HttpError(400, "NO_IMAGES", "這個對話還沒有生成過圖片");
   }
@@ -242,9 +248,19 @@ export async function saveSessionImagesToCloud(params: {
   const files: SavedFile[] = [];
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
-    const name = `${baseName}_${i + 1}.${extFromMime(img.mime)}`;
-    const up = await uploadFile(token, folderId, name, img.mime, img.bytes);
-    files.push({ name: up.name || name, link: up.webViewLink });
+    const n = i + 1;
+
+    if (variant !== "small") {
+      const name = `${baseName}_${n}.${extFromMime(img.mime)}`;
+      const up = await uploadFile(token, folderId, name, img.mime, img.bytes);
+      files.push({ name: up.name || name, link: up.webViewLink });
+    }
+    if (variant !== "original") {
+      const small = await compressForCloud(img.bytes);
+      const name = `${baseName}_${n}${variant === "both" ? "_小" : ""}.jpg`;
+      const up = await uploadFile(token, folderId, name, small.mime, small.bytes);
+      files.push({ name: up.name || name, link: up.webViewLink });
+    }
   }
 
   return {

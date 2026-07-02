@@ -1,8 +1,9 @@
 import type { NextRequest } from "next/server";
+import { z } from "zod";
 import { getSession, listGeneratedImages } from "@/db/queries";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { requireAuth } from "@/lib/auth/session";
-import { saveSessionImagesToCloud } from "@/lib/drive";
+import { type CloudSaveVariant, saveSessionImagesToCloud } from "@/lib/drive";
 import { HttpError, route, uuidParam } from "@/lib/http";
 import { resolveSaveBaseName } from "@/lib/intent";
 
@@ -24,6 +25,18 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
   const session = await getSession(uid, sessionId);
   if (!session) throw new HttpError(404, "NOT_FOUND", "找不到此對話");
 
+  // Which rendition(s) to save — chosen from the button's dropdown. Tolerate a
+  // missing/invalid body (defaults to original).
+  let variant: CloudSaveVariant = "original";
+  try {
+    const parsed = z
+      .object({ size: z.enum(["original", "small", "both"]) })
+      .safeParse(await req.json());
+    if (parsed.success) variant = parsed.data.size;
+  } catch {
+    /* no JSON body → original */
+  }
+
   const imgs = await listGeneratedImages(sessionId);
   if (imgs.length === 0) throw new HttpError(400, "NO_IMAGES", "這個對話還沒有生成過圖片");
 
@@ -31,6 +44,7 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
     session: { id: session.id, title: session.title, driveFolderId: session.driveFolderId },
     images: imgs.map((i) => ({ mime: i.mime, bytes: i.bytes })),
     baseName: resolveSaveBaseName(),
+    variant,
   });
 
   return Response.json({ data: result }, { status: 201 });
