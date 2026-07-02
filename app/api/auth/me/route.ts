@@ -4,13 +4,20 @@ import { getUserById, updateUserTheme } from "@/db/queries";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { getAuthUserId, requireAuth } from "@/lib/auth/session";
 import { parseJson, route } from "@/lib/http";
+import { canUploadImages } from "@/lib/permissions";
 import { setThemeCookie, type Theme } from "@/lib/theme-cookie";
 
 export const runtime = "nodejs";
 
 export const GET = route(async () => {
   const uid = await getAuthUserId();
-  if (!uid) return Response.json({ authenticated: false, username: null, theme: null });
+  if (!uid)
+    return Response.json({
+      authenticated: false,
+      username: null,
+      theme: null,
+      canUpload: false,
+    });
   const user = await getUserById(uid);
   // Keep the SSR cookie in sync with the DB (heals a stale/missing cookie so the
   // next full page load paints correctly without a flash).
@@ -19,6 +26,7 @@ export const GET = route(async () => {
     authenticated: Boolean(user),
     username: user?.username ?? null,
     theme: user?.theme ?? null,
+    canUpload: canUploadImages(user?.username),
   });
 });
 

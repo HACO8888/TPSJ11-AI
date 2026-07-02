@@ -3,8 +3,10 @@ import { z } from "zod";
 import {
   autoTitleIfDefault,
   deleteMessagesAfter,
+  getFirstMessageId,
   getMessage,
   getSession,
+  renameSession,
   touchSession,
   updateMessageContent,
 } from "@/db/queries";
@@ -44,7 +46,14 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
   const finalContent = content ?? msg.content;
   if (content && content !== msg.content) {
     await updateMessageContent(messageId, content);
-    await autoTitleIfDefault(sessionId, titleFrom(content));
+    // The title is derived from the first message. If that's the one being edited,
+    // regenerate the title from the new content; otherwise only fill a still-default title.
+    const firstId = await getFirstMessageId(sessionId);
+    if (firstId === messageId) {
+      await renameSession(uid, sessionId, titleFrom(content));
+    } else {
+      await autoTitleIfDefault(sessionId, titleFrom(content));
+    }
   }
 
   // Drop the old reply (and any later turns) before regenerating.

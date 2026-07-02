@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 interface Props {
   disabled?: boolean; // no active session
   busy?: boolean; // streaming / generating
+  canUpload?: boolean; // whether this account may attach 素材 images
   onSend: (text: string, files?: File[]) => void;
   onStop: () => void;
 }
@@ -14,7 +15,7 @@ interface Props {
 const MAX_FILES = 4;
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 
-export function Composer({ disabled, busy, onSend, onStop }: Props) {
+export function Composer({ disabled, busy, canUpload = false, onSend, onStop }: Props) {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
@@ -92,16 +93,27 @@ export function Composer({ disabled, busy, onSend, onStop }: Props) {
           </div>
         )}
         <div className="flex items-end gap-2 rounded-xl border border-line bg-surface p-2">
-          <input ref={fileRef} type="file" accept={ACCEPT} multiple hidden onChange={pickFiles} />
-          <Button
-            variant="outline"
-            size="icon"
-            disabled={disabled || busy || files.length >= MAX_FILES}
-            onClick={() => fileRef.current?.click()}
-            aria-label="加入素材"
-          >
-            <Plus size={18} />
-          </Button>
+          {canUpload && (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept={ACCEPT}
+                multiple
+                hidden
+                onChange={pickFiles}
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={disabled || busy || files.length >= MAX_FILES}
+                onClick={() => fileRef.current?.click()}
+                aria-label="加入素材"
+              >
+                <Plus size={18} />
+              </Button>
+            </>
+          )}
           {/*
             font-size must stay ≥ 16px: iOS Safari / in-app WebViews (FB / IG /
             LINE) auto-zoom the whole page when focusing any field smaller than
@@ -138,8 +150,8 @@ export function Composer({ disabled, busy, onSend, onStop }: Props) {
           )}
         </div>
         <p className="mt-1.5 px-1 font-mono text-[10px] text-muted">
-          想要圖片時直接描述即可（例如「幫我畫一隻在營火旁的狼」），系統會自動生成；也可以按 ＋
-          上傳圖片素材，請 AI 看圖或改造成新圖。
+          想要圖片時直接描述即可（例如「幫我畫一隻在營火旁的狼」），系統會自動生成
+          {canUpload ? "；也可以按 ＋ 上傳圖片素材，請 AI 看圖或改造成新圖。" : "。"}
         </p>
       </div>
     </div>

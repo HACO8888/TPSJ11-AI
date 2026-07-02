@@ -4,6 +4,7 @@ import {
   appendUserMessageWithUploads,
   autoTitleIfDefault,
   getSession,
+  getUserById,
   touchSession,
 } from "@/db/queries";
 import { imageSize, sniffMime } from "@/lib/aiClient";
@@ -11,6 +12,7 @@ import { assertSameOrigin } from "@/lib/auth/csrf";
 import { requireAuth } from "@/lib/auth/session";
 import { buildGenerationStream, sseResponse, titleFrom } from "@/lib/generate";
 import { HttpError, parseJson, route, uuidParam } from "@/lib/http";
+import { canUploadImages } from "@/lib/permissions";
 
 export const runtime = "nodejs";
 export const maxDuration = 120; // image generation may run here (~23s)
@@ -88,6 +90,13 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
   let content: string;
   let uploads: ParsedUpload[] = [];
   if (isMultipart) {
+    // 素材 uploads (the only reason the client sends multipart) are allowlist-gated.
+    // The composer hides the button for others; re-check server-side so it can't be
+    // bypassed — and do it before buffering the (up to ~32MB) body.
+    const user = await getUserById(uid);
+    if (!canUploadImages(user?.username)) {
+      throw new HttpError(403, "UPLOAD_FORBIDDEN", "此帳號無法上傳圖片");
+    }
     ({ content, uploads } = await parseMultipart(req));
   } else {
     ({ content } = await parseJson(req, Body));

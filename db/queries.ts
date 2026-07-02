@@ -184,6 +184,17 @@ export async function getMessage(sessionId: string, id: string) {
   return row ?? null;
 }
 
+/** The earliest message's id in a session — the one the auto-title is derived from. */
+export async function getFirstMessageId(sessionId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(eq(messages.sessionId, sessionId))
+    .orderBy(asc(messages.createdAt))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 export async function updateMessageContent(id: string, content: string) {
   await db.update(messages).set({ content }).where(eq(messages.id, id));
 }

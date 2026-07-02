@@ -41,11 +41,20 @@ export function isLikelyImageEdit(text: string): boolean {
 
 /* --------------------------------- cloud save ---------------------------------- */
 
-// Deterministic keyword gate for "push this session's generated images to Drive".
-// Kept broad on purpose — the user explicitly types one of these, so we'd rather
-// catch every natural phrasing than make them guess the magic words.
-const CLOUD_SAVE_CUE =
-  /(?:儲存|存|上傳|備份|傳|同步|丟|放)\s*(?:到|至|去|進|上)?\s*(?:雲端硬碟|雲端|google\s*drive|g\s*drive|gdrive|雲|drive)|雲端\s*(?:儲存|備份|上傳|保存)|存雲|上雲|save\s*(?:it|them|this|the\s*images?)?\s*to\s*(?:the\s*)?(?:cloud|google\s*drive|drive|gdrive)|upload\s*(?:to|it|them)?\s*(?:the\s*)?(?:cloud|google\s*drive|drive)|back\s*up\s*to\s*(?:cloud|drive)/i;
+// Deterministic keyword gate for "push this session's generated images to the cloud".
+// Broad on purpose — this app's only "save" IS the cloud save, so a save verb next to
+// a file/image object (存檔案、存圖片、存起來) or a cloud target (存到雲端、上傳雲端)
+// all count. 上傳/傳 only trigger with a cloud target, so "上傳圖片" (= attach 素材)
+// is NOT misread as a cloud save.
+const CLOUD_TARGET = "雲端硬碟|雲端|google\\s*drive|g\\s*drive|gdrive|雲|drive";
+const CLOUD_SAVE_CUE = new RegExp(
+  `(?:儲存|存|保存|備份)\\s*(?:到|至|去|進|上|成)?\\s*(?:${CLOUD_TARGET}|檔案|檔|圖片|圖|相片|照片|這張|起來|下來)` +
+    `|(?:上傳|傳|同步)\\s*(?:到|至)?\\s*(?:${CLOUD_TARGET})` +
+    `|雲端\\s*(?:儲存|備份|上傳|保存)` +
+    `|save\\s+(?:this|it|them|file|images?|photos?|the\\s+images?|to\\s+(?:the\\s+)?(?:cloud|google\\s*drive|drive))` +
+    `|upload\\s+(?:to\\s+)?(?:the\\s+)?(?:cloud|google\\s*drive|drive)`,
+  "i",
+);
 
 /** True when the message asks to save the session's images to the cloud. */
 export function hasCloudSaveCue(text: string): boolean {

@@ -211,7 +211,12 @@ export function AppShell() {
             busy={busy}
             onRegenerate={convo.regenerate}
           />
-          <Composer busy={busy} onSend={handleSend} onStop={convo.stop} />
+          <Composer
+            busy={busy}
+            canUpload={meQ.data?.canUpload ?? false}
+            onSend={handleSend}
+            onStop={convo.stop}
+          />
         </main>
 
         <ConfirmDialog

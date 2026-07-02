@@ -7,6 +7,8 @@ export interface Me {
   authenticated: boolean;
   username: string | null;
   theme: "light" | "dark" | null;
+  /** Whether this account may upload 素材 images (server-computed allowlist). */
+  canUpload: boolean;
 }
 
 export function useMe() {
