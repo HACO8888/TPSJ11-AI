@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { ApiError, apiSend } from "@/lib/api/client";
 
 export function LoginForm() {
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -87,7 +87,7 @@ export function LoginForm() {
             type="submit"
             variant="primary"
             size="md"
-            disabled={pending || !password}
+            disabled={pending || !username || !password}
             className="mt-5 w-full"
           >
             {pending ? "登入中…" : "進入營地"}
