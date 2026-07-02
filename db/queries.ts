@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "./index";
-import { images, messages, sessions, users } from "./schema";
+import { appSettings, images, messages, sessions, users } from "./schema";
 
 /* ------------------------------------ users ------------------------------------ */
 
@@ -394,4 +394,76 @@ export async function getLatestGeneratedImage(sessionId: string): Promise<Attach
     .orderBy(desc(images.createdAt))
     .limit(1);
   return row ?? null;
+}
+
+export interface GeneratedImageRow {
+  id: string;
+  mime: string;
+  bytes: Buffer;
+  prompt: string | null;
+  createdAt: Date;
+}
+
+/**
+ * Every generated image in a session, oldest → newest — the set uploaded on a
+ * cloud save. ASC order is what gives files their _1.._N suffix (oldest = 1).
+ */
+export async function listGeneratedImages(sessionId: string): Promise<GeneratedImageRow[]> {
+  return db
+    .select({
+      id: images.id,
+      mime: images.mime,
+      bytes: images.bytes,
+      prompt: images.prompt,
+      createdAt: images.createdAt,
+    })
+    .from(images)
+    .where(and(eq(images.sessionId, sessionId), eq(images.source, "generated")))
+    .orderBy(asc(images.createdAt));
+}
+
+/* --------------------------------- cloud save ---------------------------------- */
+
+export interface SessionRow {
+  id: string;
+  title: string;
+  driveFolderId: string | null;
+}
+
+/** Session by id alone (ownership already checked upstream) — for the cloud-save flow. */
+export async function getSessionRow(sessionId: string): Promise<SessionRow | null> {
+  const [row] = await db
+    .select({ id: sessions.id, title: sessions.title, driveFolderId: sessions.driveFolderId })
+    .from(sessions)
+    .where(eq(sessions.id, sessionId))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Remember the Drive folder created for a session so we never duplicate it. */
+export async function setSessionDriveFolder(
+  sessionId: string,
+  driveFolderId: string,
+): Promise<void> {
+  await db.update(sessions).set({ driveFolderId }).where(eq(sessions.id, sessionId));
+}
+
+/* ---------------------------------- settings ----------------------------------- */
+
+/** Read a runtime setting blob (e.g. the Google Drive config). */
+export async function getSetting<T = Record<string, unknown>>(key: string): Promise<T | null> {
+  const [row] = await db
+    .select({ value: appSettings.value })
+    .from(appSettings)
+    .where(eq(appSettings.key, key))
+    .limit(1);
+  return (row?.value as T | undefined) ?? null;
+}
+
+/** Upsert a runtime setting blob. */
+export async function setSetting(key: string, value: Record<string, unknown>): Promise<void> {
+  await db
+    .insert(appSettings)
+    .values({ key, value, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
 }

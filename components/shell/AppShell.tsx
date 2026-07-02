@@ -9,6 +9,7 @@ import { SessionSidebar } from "@/components/sidebar/SessionSidebar";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ThemeProvider } from "@/components/ui/ThemeProvider";
+import { ApiError, apiSend } from "@/lib/api/client";
 import { useConversation } from "@/lib/hooks/useConversation";
 import { useMe } from "@/lib/hooks/useMe";
 import {
@@ -37,6 +38,11 @@ export function AppShell() {
   const convo = useConversation(activeId);
   const meQ = useMe();
 
+  // Cloud save (server-side upload of this session's generated images to Drive).
+  const [cloudSaving, setCloudSaving] = useState(false);
+  const [cloudMsg, setCloudMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const hasGeneratedImage = convo.messages.some((m) => m.kind === "image" && !!m.imageId);
+
   // Restore a deep-linked session from the URL. Otherwise the default is a fresh,
   // unsaved conversation — a session is only created on the first message, so
   // opening the app (or "新對話") without typing leaves nothing behind.
@@ -58,6 +64,13 @@ export function AppShell() {
       setPendingMessage(null);
     }
   }, [activeId, pendingMessage]);
+
+  // Auto-dismiss the cloud-save result banner after a few seconds.
+  useEffect(() => {
+    if (!cloudMsg) return;
+    const t = setTimeout(() => setCloudMsg(null), 6000);
+    return () => clearTimeout(t);
+  }, [cloudMsg]);
 
   async function handleSend(text: string, files?: File[]) {
     if (activeId) {
@@ -90,6 +103,26 @@ export function AppShell() {
       },
     });
     setPendingDelete(null);
+  }
+
+  async function handleCloudSave() {
+    if (!activeId || cloudSaving) return;
+    setCloudSaving(true);
+    setCloudMsg(null);
+    try {
+      const r = await apiSend<{ data: { count: number; folderLink: string } }>(
+        `/api/sessions/${activeId}/cloud-save`,
+        "POST",
+      );
+      setCloudMsg({ ok: true, text: `已將 ${r.data.count} 張圖片儲存到雲端 ☁️` });
+    } catch (e) {
+      setCloudMsg({
+        ok: false,
+        text: e instanceof ApiError ? e.message : "雲端儲存失敗，請稍後再試",
+      });
+    } finally {
+      setCloudSaving(false);
+    }
   }
 
   const sidebarProps = {
@@ -140,12 +173,33 @@ export function AppShell() {
         </Dialog.Root>
 
         <main className="flex min-w-0 flex-1 flex-col">
-          <TopBar title={activeTitle} onOpenSidebar={() => setSheetOpen(true)} />
+          <TopBar
+            title={activeTitle}
+            onOpenSidebar={() => setSheetOpen(true)}
+            canCloudSave={!!activeId && hasGeneratedImage && !busy}
+            cloudSaving={cloudSaving}
+            onCloudSave={handleCloudSave}
+          />
 
           {convo.error && (
             <div className="flex items-center gap-3 border-b border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger">
               <span className="flex-1">{convo.error}</span>
               <button type="button" onClick={convo.clearError} aria-label="關閉提示">
+                <X size={15} />
+              </button>
+            </div>
+          )}
+
+          {cloudMsg && (
+            <div
+              className={`flex items-center gap-3 border-b px-4 py-2 text-sm ${
+                cloudMsg.ok
+                  ? "border-brand/30 bg-brand/10 text-brand"
+                  : "border-danger/30 bg-danger/10 text-danger"
+              }`}
+            >
+              <span className="flex-1">{cloudMsg.text}</span>
+              <button type="button" onClick={() => setCloudMsg(null)} aria-label="關閉提示">
                 <X size={15} />
               </button>
             </div>

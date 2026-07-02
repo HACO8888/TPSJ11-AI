@@ -3,7 +3,9 @@ import {
   createImageMessage,
   getLatestGeneratedImage,
   getMessageAttachments,
+  getSessionRow,
   hasRecentImageMessage,
+  listGeneratedImages,
   loadContextRows,
   persistAssistant,
 } from "@/db/queries";
@@ -16,9 +18,17 @@ import {
   type ImageReference,
 } from "./aiClient";
 import { buildContext } from "./context";
+import { saveSessionImagesToCloud } from "./drive";
 import { logError } from "./errors";
 import { HttpError } from "./http";
-import { classifyImageIntent, hasImageCue, isBareImageRequest, isLikelyImageEdit } from "./intent";
+import {
+  classifyImageIntent,
+  hasCloudSaveCue,
+  hasImageCue,
+  isBareImageRequest,
+  isLikelyImageEdit,
+  resolveSaveBaseName,
+} from "./intent";
 
 const IMAGE_PREFIX = "/image ";
 
@@ -71,6 +81,57 @@ export function buildGenerationStream(opts: {
       let usage: Record<string, unknown> | null = null;
 
       try {
+        // ---- Cloud-save branch (keyword-triggered, highest priority) ----
+        // "存到雲端" pushes this session's generated images to Drive, server-side.
+        // It short-circuits before any image/chat routing or LLM call.
+        if (hasCloudSaveCue(content)) {
+          controller.enqueue(sse("route", { kind: "chat" }));
+          const reply = async (text: string) => {
+            const saved = await persistAssistant(sessionId, text, null, false);
+            controller.enqueue(sse("delta", { text }));
+            controller.enqueue(sse("done", { assistantMessageId: saved.id }));
+            controller.close();
+          };
+          try {
+            const [session, imgs] = await Promise.all([
+              getSessionRow(sessionId),
+              listGeneratedImages(sessionId),
+            ]);
+            if (!session) throw new HttpError(404, "NOT_FOUND", "找不到對話");
+            if (imgs.length === 0) {
+              await reply(
+                "這個對話目前還沒有生成過圖片，所以沒有可以儲存到雲端的內容喔。先讓我幫你生成一張吧！🔥",
+              );
+              return;
+            }
+            const result = await saveSessionImagesToCloud({
+              session,
+              images: imgs.map((i) => ({ mime: i.mime, bytes: i.bytes })),
+              baseName: resolveSaveBaseName(content),
+            });
+            const list = result.files.map((f) => `・${f.name}`).join("\n");
+            await reply(
+              `已把這個對話的 ${result.count} 張圖片儲存到雲端 📁\n資料夾：「${session.title}」\n${list}\n\n${result.folderLink}`,
+            );
+          } catch (e) {
+            const he = e instanceof HttpError ? e : new HttpError(502, "DRIVE", "雲端儲存失敗", e);
+            const ref = await logError({
+              scope: "generate.cloud-save",
+              code: he.code,
+              status: he.status,
+              message: he.message,
+              detail: he.details ?? e,
+              sessionId,
+            });
+            const friendly =
+              he.code === "DRIVE_NOT_CONFIGURED"
+                ? "雲端儲存還沒設定好（缺 Google Drive 授權），請通知管理員。"
+                : `儲存到雲端時發生問題，請稍後再試。（錯誤編號：${ref}）`;
+            await reply(friendly);
+          }
+          return;
+        }
+
         // Load the conversation once (used for routing context + the chat reply).
         const history = await loadContextRows(sessionId);
         const hasPriorContent = history.slice(0, -1).some((r) => r.role === "assistant");

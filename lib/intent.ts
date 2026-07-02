@@ -39,6 +39,84 @@ export function isLikelyImageEdit(text: string): boolean {
   return EDIT_CUE.test(text);
 }
 
+/* --------------------------------- cloud save ---------------------------------- */
+
+// Deterministic keyword gate for "push this session's generated images to Drive".
+// Kept broad on purpose — the user explicitly types one of these, so we'd rather
+// catch every natural phrasing than make them guess the magic words.
+const CLOUD_SAVE_CUE =
+  /(?:儲存|存|上傳|備份|傳|同步|丟|放)\s*(?:到|至|去|進|上)?\s*(?:雲端硬碟|雲端|google\s*drive|g\s*drive|gdrive|雲|drive)|雲端\s*(?:儲存|備份|上傳|保存)|存雲|上雲|save\s*(?:it|them|this|the\s*images?)?\s*to\s*(?:the\s*)?(?:cloud|google\s*drive|drive|gdrive)|upload\s*(?:to|it|them)?\s*(?:the\s*)?(?:cloud|google\s*drive|drive)|back\s*up\s*to\s*(?:cloud|drive)/i;
+
+/** True when the message asks to save the session's images to the cloud. */
+export function hasCloudSaveCue(text: string): boolean {
+  return CLOUD_SAVE_CUE.test(text);
+}
+
+export interface SaveName {
+  /** An explicit filename the user gave ("檔名：營火海報"). */
+  fileName?: string;
+  /** A patrol/team name mentioned ("第三小隊", "獵鷹小隊"). */
+  teamName?: string;
+}
+
+// Strip characters that are illegal (or awkward) in a Drive filename.
+function sanitizeName(s: string): string {
+  return s
+    .replace(/[/\\:*?"<>|]/g, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .slice(0, 40);
+}
+
+/**
+ * Pull a filename and/or team name out of the message so a cloud save can honour
+ * "存到雲端，檔名叫營火海報" or "第三小隊的圖存到雲端".
+ */
+export function extractSaveName(text: string): SaveName {
+  const out: SaveName = {};
+
+  const fm = text.match(
+    /(?:檔名|檔案名稱|檔案名|命名為|命名成|存成|存為|另存為|叫做|叫作|名為|filename|file\s*name)\s*[:：叫為]?\s*["「『]?([^\s"」』，。、!！?？\n]{1,40})/i,
+  );
+  if (fm?.[1]) out.fileName = sanitizeName(fm[1]);
+
+  // 「第N小隊/小組」 or 「XX小隊/小組」 (bounded so we don't swallow a whole sentence).
+  const tm = text.match(
+    /第\s*[0-9零一二三四五六七八九十百]{1,3}\s*(?:小隊|小組|中隊|分隊)|[一-鿿A-Za-z0-9]{1,6}(?:小隊|小組)/,
+  );
+  if (tm?.[0]) out.teamName = sanitizeName(tm[0]);
+
+  return out;
+}
+
+// Taipei-local "YYYYMMDD-HHmm" — the fallback base name when nothing else fits.
+function timestampName(): string {
+  const parts = new Intl.DateTimeFormat("zh-TW", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}${g("month")}${g("day")}-${g("hour")}${g("minute")}`;
+}
+
+/**
+ * The base name for cloud-saved files: an explicit filename wins, then a team
+ * name, else a timestamp. Files get a `_1`.._N suffix by the caller.
+ */
+export function resolveSaveBaseName(content?: string): string {
+  if (content) {
+    const { fileName, teamName } = extractSaveName(content);
+    if (fileName) return fileName;
+    if (teamName) return teamName;
+  }
+  return timestampName();
+}
+
 const CLASSIFY_SYSTEM =
   "你是一個意圖判斷器。根據提供的對話脈絡與使用者最新訊息，判斷使用者是不是想要一張圖片，以及能否得出可直接生成的具體描述。" +
   "只要使用者表達想要圖片就 image=true（即使沒主題，如「幫我畫」「我要一張圖」）。" +

@@ -31,6 +31,9 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title").notNull().default("新對話"),
+    // Google Drive folder id for this session's cloud-saved images (one folder per
+    // session, created lazily on first cloud save). Null until the first save.
+    driveFolderId: text("drive_folder_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -109,8 +112,20 @@ export const errorLogs = pgTable(
   (t) => [index("error_logs_created_idx").on(t.createdAt)],
 );
 
+/**
+ * Key-value store for app-wide settings that must be editable at runtime without
+ * a redeploy — currently just the Google Drive OAuth integration config under key
+ * 'google_drive' ({ clientId, clientSecret, refreshToken, tmpFolderId, rootFolderId }).
+ */
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Image = typeof images.$inferSelect;
 export type ErrorLog = typeof errorLogs.$inferSelect;
+export type AppSetting = typeof appSettings.$inferSelect;
