@@ -6,6 +6,7 @@ import { DUMMY_HASH, verifyPassword } from "@/lib/auth/password";
 import { checkLogin, recordFailure, recordSuccess } from "@/lib/auth/rate-limit";
 import { createSession } from "@/lib/auth/session";
 import { HttpError, parseJson, route } from "@/lib/http";
+import { setThemeCookie, type Theme } from "@/lib/theme-cookie";
 
 export const runtime = "nodejs";
 
@@ -37,5 +38,8 @@ export const POST = route(async (req: NextRequest) => {
 
   recordSuccess();
   await createSession(user.id);
+  // Seed the SSR theme cookie from the account's saved preference so the first
+  // page load after login already paints the right palette (cross-device).
+  await setThemeCookie(user.theme as Theme);
   return Response.json({ ok: true });
 });

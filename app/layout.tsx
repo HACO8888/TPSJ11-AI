@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import type { ReactNode } from "react";
+import { THEME_COOKIE } from "@/lib/theme-cookie";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -27,12 +29,13 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-// Default to the light palette; only go dark when the user has explicitly chosen it.
-const themeScript = `(function(){try{if(localStorage.getItem('tpsj-theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}})();`;
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Read the theme cookie server-side so the correct palette class is on <html>
+  // in the very first byte of HTML — no flash, no client script needed.
+  const dark = (await cookies()).get(THEME_COOKIE)?.value === "dark";
 
-export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="zh-Hant" suppressHydrationWarning>
+    <html lang="zh-Hant" className={dark ? "dark" : undefined} suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
@@ -40,8 +43,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           href="https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
-        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static, input-free theme script to avoid a flash of the wrong palette */}
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
         <Providers>{children}</Providers>

@@ -10,19 +10,16 @@ type Theme = "light" | "dark";
 const ThemeContext = createContext<{ dark: boolean; toggle: () => void } | null>(null);
 
 function applyTheme(theme: Theme) {
+  // Instant, in-page switch. Persistence + flash-free SSR is handled by the
+  // httpOnly `tpsj_theme` cookie that the PATCH/login/me routes set server-side.
   document.documentElement.classList.toggle("dark", theme === "dark");
-  try {
-    // Cache for the head script → instant, flash-free paint on the next reload.
-    localStorage.setItem("tpsj-theme", theme);
-  } catch {
-    /* storage unavailable */
-  }
 }
 
 /**
  * Account-level theme. The DB (via /api/auth/me) is the source of truth so the
- * preference follows the user across devices/browsers; localStorage is only a
- * local cache the head script reads to avoid a flash of the wrong palette.
+ * preference follows the user across devices/browsers; the root layout paints
+ * the correct palette from the theme cookie during SSR, so the seed below is
+ * already correct on first render.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
