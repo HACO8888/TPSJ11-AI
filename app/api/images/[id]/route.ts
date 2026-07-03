@@ -1,11 +1,16 @@
 import type { NextRequest } from "next/server";
 import { getImageBytes } from "@/db/queries";
 import { requireAuth } from "@/lib/auth/session";
+import { logError } from "@/lib/errors";
 import { HttpError, route, uuidParam } from "@/lib/http";
 
 export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+// Log a sharp load/resize failure just once per server instance (diagnostic; the
+// request still succeeds by serving the original bytes).
+let loggedResizeFail = false;
 
 export const GET = route<Ctx>(async (req: NextRequest, { params }) => {
   await requireAuth(); // images are private to logged-in users
@@ -38,7 +43,16 @@ export const GET = route<Ctx>(async (req: NextRequest, { params }) => {
           ETag: `"${id}-w${width}"`,
         },
       });
-    } catch {
+    } catch (e) {
+      if (!loggedResizeFail) {
+        loggedResizeFail = true;
+        await logError({
+          scope: "images.resize",
+          code: "SHARP_FAIL",
+          message: "sharp 縮圖失敗，改回原圖",
+          detail: e,
+        }).catch(() => {});
+      }
       // sharp unavailable → fall through and serve the original bytes.
     }
   }

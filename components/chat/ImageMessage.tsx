@@ -70,7 +70,7 @@ export function ImageMessage({ imageUrl, prompt }: { imageUrl: string; prompt: s
   // Downsized renditions for display so the chat view loads fast; the full original
   // (imageUrl, no ?w) is only fetched for the 原圖 download.
   const thumbSrc = `${imageUrl}?w=1024`;
-  const zoomSrc = `${imageUrl}?w=1600`;
+  const zoomSrc = `${imageUrl}?w=1280`;
 
   async function handleDownload() {
     setDownloading(true);
