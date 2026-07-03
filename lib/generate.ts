@@ -232,6 +232,18 @@ export function buildGenerationStream(opts: {
               e instanceof HttpError && e.details && typeof e.details === "object"
                 ? (e.details as { upstreamStatus?: number }).upstreamStatus
                 : undefined;
+            // Upstream quota/capacity exhausted → a calm chat message, not a scary
+            // error banner (it's a temporary provider limit, not a user/prompt issue).
+            if (e instanceof HttpError && e.code === "UPSTREAM_CAPACITY") {
+              controller.enqueue(sse("route", { kind: "chat" }));
+              const msg =
+                "圖片產生服務目前額度用盡或忙線中 🙏，請稍後再試（通常過一段時間會自動恢復）。";
+              const saved = await persistAssistant(sessionId, msg, null, false);
+              controller.enqueue(sse("delta", { text: msg }));
+              controller.enqueue(sse("done", { assistantMessageId: saved.id }));
+              controller.close();
+              return;
+            }
             // 400/422 = the image model rejected the prompt (too vague / not an
             // image request). Fall back to a chat reply so the assistant can ask
             // for a clearer description instead of surfacing a confusing error.

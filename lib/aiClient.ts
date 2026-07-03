@@ -187,5 +187,16 @@ async function upstreamError(r: Response): Promise<HttpError> {
   if (r.status === 401) return new HttpError(502, "UPSTREAM_AUTH", "AI 服務驗證失敗", details);
   if (r.status === 429)
     return new HttpError(502, "UPSTREAM_RATE", "AI 服務忙碌中，請稍後再試", details);
+  // The gateway often wraps a provider quota/capacity error in a 500 body
+  // ("RESOURCE_EXHAUSTED", "quota", "no healthy provider"). Surface it as a clear,
+  // non-scary message — it's a temporary upstream limit, not a bug on our side.
+  if (/quota|exhausted|resource_exhausted|ratelimitexceeded|no healthy provider/i.test(body)) {
+    return new HttpError(
+      502,
+      "UPSTREAM_CAPACITY",
+      "AI 服務目前額度用盡或忙線中，請稍後再試",
+      details,
+    );
+  }
   return new HttpError(502, "UPSTREAM", "AI 服務錯誤", details);
 }
