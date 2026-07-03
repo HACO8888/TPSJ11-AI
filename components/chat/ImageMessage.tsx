@@ -67,11 +67,15 @@ export function ImageMessage({ imageUrl, prompt }: { imageUrl: string; prompt: s
   const [downloading, setDownloading] = useState(false);
 
   const filename = `tpsj11-${prompt.slice(0, 20).trim() || "image"}.jpg`;
+  // Downsized renditions for display so the chat view loads fast; the full original
+  // (imageUrl, no ?w) is only fetched for the 原圖 download.
+  const thumbSrc = `${imageUrl}?w=1024`;
+  const zoomSrc = `${imageUrl}?w=1600`;
 
   async function handleDownload() {
     setDownloading(true);
     try {
-      const blob = await compressForDownload(imageUrl);
+      const blob = await compressForDownload(zoomSrc);
       triggerDownload(URL.createObjectURL(blob), filename, true);
     } catch {
       // Re-encode failed (e.g. very old browser) → fall back to the original bytes.
@@ -93,7 +97,7 @@ export function ImageMessage({ imageUrl, prompt }: { imageUrl: string; prompt: s
         {!loaded && <span className="shimmer absolute inset-0" aria-hidden />}
         {/* biome-ignore lint/performance/noImgElement: auth-gated dynamic BYTEA image, not statically optimizable by next/image */}
         <img
-          src={imageUrl}
+          src={thumbSrc}
           alt={prompt}
           loading="lazy"
           onLoad={() => setLoaded(true)}
@@ -117,7 +121,7 @@ export function ImageMessage({ imageUrl, prompt }: { imageUrl: string; prompt: s
             <div className="flex min-h-0 w-full flex-1 items-center justify-center">
               {/* biome-ignore lint/performance/noImgElement: auth-gated dynamic BYTEA image, not statically optimizable by next/image */}
               <img
-                src={imageUrl}
+                src={zoomSrc}
                 alt={prompt}
                 className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
               />
