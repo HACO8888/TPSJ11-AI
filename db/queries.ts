@@ -167,14 +167,6 @@ export async function getMessages(sessionId: string): Promise<MessageDTO[]> {
   }));
 }
 
-export async function appendUserMessage(sessionId: string, content: string) {
-  const [row] = await db
-    .insert(messages)
-    .values({ sessionId, role: "user", kind: "text", content })
-    .returning({ id: messages.id, createdAt: messages.createdAt });
-  return row;
-}
-
 export async function persistAssistant(
   sessionId: string,
   content: string,
