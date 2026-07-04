@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./index";
 import { appSettings, errorLogs, images, messages, sessions, users } from "./schema";
 
@@ -46,11 +46,12 @@ export async function listSessions(userId: string): Promise<SessionMeta[]> {
       title: sessions.title,
       createdAt: sessions.createdAt,
       updatedAt: sessions.updatedAt,
-      messageCount: sql<number>`count(${messages.id})::int`,
+      // Only count live messages (soft-deleted regenerate branches don't show).
+      messageCount: sql<number>`cast(count(${messages.id}) filter (where ${messages.deletedAt} is null) as int)`,
     })
     .from(sessions)
     .leftJoin(messages, eq(messages.sessionId, sessions.id))
-    .where(eq(sessions.userId, userId))
+    .where(and(eq(sessions.userId, userId), isNull(sessions.deletedAt)))
     .groupBy(sessions.id)
     .orderBy(desc(sessions.updatedAt));
 }
@@ -67,7 +68,7 @@ export async function getSession(userId: string, id: string) {
   const [row] = await db
     .select()
     .from(sessions)
-    .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
+    .where(and(eq(sessions.id, id), eq(sessions.userId, userId), isNull(sessions.deletedAt)))
     .limit(1);
   return row ?? null;
 }
@@ -81,10 +82,16 @@ export async function renameSession(userId: string, id: string, title: string) {
   return row ?? null;
 }
 
+/**
+ * Soft-delete a user's own session: mark it deleted rather than removing the row,
+ * so the admin can still review (and restore) it. Idempotent — only flips rows
+ * that are still live. Returns true if a live session was actually deleted.
+ */
 export async function deleteSession(userId: string, id: string) {
   const rows = await db
-    .delete(sessions)
-    .where(and(eq(sessions.id, id), eq(sessions.userId, userId)))
+    .update(sessions)
+    .set({ deletedAt: new Date() })
+    .where(and(eq(sessions.id, id), eq(sessions.userId, userId), isNull(sessions.deletedAt)))
     .returning({ id: sessions.id });
   return rows.length > 0;
 }
@@ -149,7 +156,7 @@ export async function getMessages(sessionId: string): Promise<MessageDTO[]> {
       createdAt: messages.createdAt,
     })
     .from(messages)
-    .where(eq(messages.sessionId, sessionId))
+    .where(and(eq(messages.sessionId, sessionId), isNull(messages.deletedAt)))
     .orderBy(asc(messages.createdAt));
 
   const attMap = await uploadedAttachmentsBySession(sessionId);
@@ -185,7 +192,7 @@ export async function getMessage(sessionId: string, id: string) {
   const [row] = await db
     .select()
     .from(messages)
-    .where(and(eq(messages.id, id), eq(messages.sessionId, sessionId)))
+    .where(and(eq(messages.id, id), eq(messages.sessionId, sessionId), isNull(messages.deletedAt)))
     .limit(1);
   return row ?? null;
 }
@@ -195,7 +202,7 @@ export async function getFirstMessageId(sessionId: string): Promise<string | nul
   const [row] = await db
     .select({ id: messages.id })
     .from(messages)
-    .where(eq(messages.sessionId, sessionId))
+    .where(and(eq(messages.sessionId, sessionId), isNull(messages.deletedAt)))
     .orderBy(asc(messages.createdAt))
     .limit(1);
   return row?.id ?? null;
@@ -206,16 +213,19 @@ export async function updateMessageContent(id: string, content: string) {
 }
 
 /**
- * Delete every message in the session created strictly after the target message
- * (used by regenerate / edit-and-resend to branch from a turn). The comparison is
- * done DB-to-DB via a subquery so microsecond precision is preserved — passing a
- * JS Date would truncate to milliseconds and could delete the target itself.
- * Cascades drop any images of the removed messages.
+ * Soft-delete every live message in the session created strictly after the target
+ * message (used by regenerate / edit-and-resend to branch from a turn). The
+ * comparison is done DB-to-DB via a subquery so microsecond precision is preserved
+ * — passing a JS Date would truncate to milliseconds and could delete the target
+ * itself. Superseded turns (and their images) stay in the DB so the admin can
+ * still review the branch that was regenerated away; live queries filter them out.
  */
 export async function deleteMessagesAfter(sessionId: string, targetMessageId: string) {
   await db.execute(sql`
-    delete from ${messages}
+    update ${messages}
+    set deleted_at = now()
     where ${messages.sessionId} = ${sessionId}
+      and ${messages.deletedAt} is null
       and ${messages.createdAt} > (
         select created_at from ${messages} where id = ${targetMessageId}
       )
@@ -243,7 +253,7 @@ export async function loadContextRows(sessionId: string): Promise<ContextRow[]> 
       content: messages.content,
     })
     .from(messages)
-    .where(eq(messages.sessionId, sessionId))
+    .where(and(eq(messages.sessionId, sessionId), isNull(messages.deletedAt)))
     .orderBy(asc(messages.createdAt));
 
   const attMap = await uploadedAttachmentsBySession(sessionId);
@@ -276,7 +286,7 @@ export async function hasRecentImageMessage(sessionId: string, lastN = 8): Promi
   const rows = await db
     .select({ kind: messages.kind })
     .from(messages)
-    .where(eq(messages.sessionId, sessionId))
+    .where(and(eq(messages.sessionId, sessionId), isNull(messages.deletedAt)))
     .orderBy(desc(messages.createdAt))
     .limit(lastN);
   return rows.some((r) => r.kind === "image");
@@ -407,7 +417,16 @@ export async function getLatestGeneratedImage(sessionId: string): Promise<Attach
   const [row] = await db
     .select({ id: images.id, mime: images.mime, bytes: images.bytes })
     .from(images)
-    .where(and(eq(images.sessionId, sessionId), eq(images.source, "generated")))
+    // Skip images whose message was regenerated away (soft-deleted) — the user
+    // has branched off them, so they must not resurface as an edit reference.
+    .innerJoin(messages, eq(messages.id, images.messageId))
+    .where(
+      and(
+        eq(images.sessionId, sessionId),
+        eq(images.source, "generated"),
+        isNull(messages.deletedAt),
+      ),
+    )
     .orderBy(desc(images.createdAt))
     .limit(1);
   return row ?? null;
@@ -426,17 +445,28 @@ export interface GeneratedImageRow {
  * cloud save. ASC order is what gives files their _1.._N suffix (oldest = 1).
  */
 export async function listGeneratedImages(sessionId: string): Promise<GeneratedImageRow[]> {
-  return db
-    .select({
-      id: images.id,
-      mime: images.mime,
-      bytes: images.bytes,
-      prompt: images.prompt,
-      createdAt: images.createdAt,
-    })
-    .from(images)
-    .where(and(eq(images.sessionId, sessionId), eq(images.source, "generated")))
-    .orderBy(asc(images.createdAt));
+  return (
+    db
+      .select({
+        id: images.id,
+        mime: images.mime,
+        bytes: images.bytes,
+        prompt: images.prompt,
+        createdAt: images.createdAt,
+      })
+      .from(images)
+      // Exclude images from regenerated-away (soft-deleted) turns so a cloud save
+      // only pushes the images the user still sees in the conversation.
+      .innerJoin(messages, eq(messages.id, images.messageId))
+      .where(
+        and(
+          eq(images.sessionId, sessionId),
+          eq(images.source, "generated"),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .orderBy(asc(images.createdAt))
+  );
 }
 
 /* --------------------------------- cloud save ---------------------------------- */
@@ -581,17 +611,21 @@ export interface AdminSession {
   messageCount: number;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt: Date | null;
 }
 
+/** Every session, including soft-deleted ones (deletedAt marks which). Admin view. */
 export async function listAllSessions(): Promise<AdminSession[]> {
   return db
     .select({
       id: sessions.id,
       title: sessions.title,
       username: users.username,
-      messageCount: sql<number>`count(${messages.id})::int`,
+      // Live message count (excludes soft-deleted regenerate branches).
+      messageCount: sql<number>`cast(count(${messages.id}) filter (where ${messages.deletedAt} is null) as int)`,
       createdAt: sessions.createdAt,
       updatedAt: sessions.updatedAt,
+      deletedAt: sessions.deletedAt,
     })
     .from(sessions)
     .leftJoin(users, eq(users.id, sessions.userId))
@@ -600,6 +634,85 @@ export async function listAllSessions(): Promise<AdminSession[]> {
     .orderBy(desc(sessions.updatedAt));
 }
 
+export interface AdminSessionDetail {
+  id: string;
+  title: string;
+  username: string | null;
+  driveFolderId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt: Date | null;
+}
+
+/** One session's full meta (ignores soft-delete) for the admin conversation view. */
+export async function getSessionAdmin(id: string): Promise<AdminSessionDetail | null> {
+  const [row] = await db
+    .select({
+      id: sessions.id,
+      title: sessions.title,
+      username: users.username,
+      driveFolderId: sessions.driveFolderId,
+      createdAt: sessions.createdAt,
+      updatedAt: sessions.updatedAt,
+      deletedAt: sessions.deletedAt,
+    })
+    .from(sessions)
+    .leftJoin(users, eq(users.id, sessions.userId))
+    .where(eq(sessions.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+export interface AdminMessage {
+  id: string;
+  role: string;
+  kind: string;
+  content: string;
+  imageId: string | null;
+  imageUrl: string | null;
+  attachments: { id: string; url: string }[];
+  partial: boolean;
+  usage: Record<string, unknown> | null;
+  createdAt: Date;
+  deletedAt: Date | null;
+}
+
+/**
+ * Every message of a session for the admin view — INCLUDING soft-deleted ones
+ * (deletedAt marks turns removed by the user's regenerate/edit), so the admin can
+ * see the full history that was branched away.
+ */
+export async function getMessagesAdmin(sessionId: string): Promise<AdminMessage[]> {
+  const rows = await db
+    .select({
+      id: messages.id,
+      role: messages.role,
+      kind: messages.kind,
+      content: messages.content,
+      imageId: messages.imageId,
+      partial: messages.partial,
+      usage: messages.usage,
+      createdAt: messages.createdAt,
+      deletedAt: messages.deletedAt,
+    })
+    .from(messages)
+    .where(eq(messages.sessionId, sessionId))
+    .orderBy(asc(messages.createdAt));
+
+  const attMap = await uploadedAttachmentsBySession(sessionId);
+  return rows.map((m) => ({
+    ...m,
+    imageUrl: m.imageId ? `/api/images/${m.imageId}` : null,
+    attachments: (attMap.get(m.id) ?? []).map((id) => ({ id, url: `/api/images/${id}` })),
+  }));
+}
+
+/** Restore a soft-deleted session (admin). No-op if it wasn't soft-deleted. */
+export async function restoreSession(id: string): Promise<void> {
+  await db.update(sessions).set({ deletedAt: null }).where(eq(sessions.id, id));
+}
+
+/** Permanently delete a session and all its messages/images (admin 永久刪除). */
 export async function deleteSessionById(id: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, id));
 }

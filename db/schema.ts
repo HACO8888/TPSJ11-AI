@@ -41,6 +41,10 @@ export const sessions = pgTable(
     driveFolderId: text("drive_folder_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // Soft delete: NULL = live, non-null = deleted at this time. User deletions set
+    // this so the admin can still review (and restore) the conversation; the
+    // admin's own "永久刪除" hard-deletes the row instead.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [index("sessions_user_id_idx").on(t.userId)],
 );
@@ -66,6 +70,10 @@ export const messages = pgTable(
     usage: jsonb("usage").$type<Record<string, unknown> | null>(),
     partial: boolean("partial").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Soft delete: NULL = live. Regenerate / edit-and-resend now soft-delete the
+    // messages after the branch point (instead of hard-deleting) so the admin can
+    // see the superseded turns; live user/model queries filter these out.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [index("messages_session_created_idx").on(t.sessionId, t.createdAt)],
 );

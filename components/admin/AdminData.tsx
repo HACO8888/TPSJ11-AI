@@ -30,9 +30,13 @@ export function AdminData() {
       ),
   });
 
-  async function del(id: string) {
+  async function purge(id: string) {
     setErr(null);
-    if (!window.confirm("確定刪除這筆資料？此操作無法復原。")) return;
+    const msg =
+      type === "sessions"
+        ? "確定「永久刪除」這個對話？連同所有訊息與圖片都會從資料庫徹底移除，無法復原。"
+        : "確定刪除這筆資料？此操作無法復原。";
+    if (!window.confirm(msg)) return;
     try {
       await apiSend(`/api/admin/data/${type}/${id}`, "DELETE");
       await qc.invalidateQueries({ queryKey: ["admin", "data", type] });
@@ -41,8 +45,19 @@ export function AdminData() {
     }
   }
 
+  async function restore(id: string) {
+    setErr(null);
+    try {
+      await apiSend(`/api/admin/sessions/${id}/restore`, "POST");
+      await qc.invalidateQueries({ queryKey: ["admin", "data", type] });
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "還原失敗");
+    }
+  }
+
   const rows = q.data ?? [];
   const cols = rows[0] ? Object.keys(rows[0]).filter((c) => c !== "id") : [];
+  const isSessions = type === "sessions";
 
   return (
     <div className="space-y-3">
@@ -74,20 +89,47 @@ export function AdminData() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={String(r.id)} className="border-t border-line">
-                {cols.map((c) => (
-                  <td key={c} className="max-w-[16rem] truncate p-2 text-ink">
-                    {fmt(r[c])}
+            {rows.map((r) => {
+              const id = String(r.id);
+              const deleted = isSessions && r.deletedAt != null;
+              return (
+                <tr
+                  key={id}
+                  className={`border-t border-line ${deleted ? "bg-danger/5 text-muted" : ""}`}
+                >
+                  {cols.map((c) => (
+                    <td key={c} className="max-w-[16rem] truncate p-2 text-ink">
+                      {c === "deletedAt" && deleted ? (
+                        <span className="rounded bg-danger/10 px-1.5 py-0.5 text-danger">
+                          已刪除
+                        </span>
+                      ) : (
+                        fmt(r[c])
+                      )}
+                    </td>
+                  ))}
+                  <td className="whitespace-nowrap p-2 text-center">
+                    {isSessions && (
+                      <a href={`/admin/sessions/${id}`} className="mr-3 text-brand hover:underline">
+                        查看
+                      </a>
+                    )}
+                    {deleted && (
+                      <button
+                        type="button"
+                        className="mr-3 text-brand hover:underline"
+                        onClick={() => restore(id)}
+                      >
+                        還原
+                      </button>
+                    )}
+                    <button type="button" className="text-danger" onClick={() => purge(id)}>
+                      {isSessions ? "永久刪除" : "刪除"}
+                    </button>
                   </td>
-                ))}
-                <td className="p-2 text-center">
-                  <button type="button" className="text-danger" onClick={() => del(String(r.id))}>
-                    刪除
-                  </button>
-                </td>
-              </tr>
-            ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
