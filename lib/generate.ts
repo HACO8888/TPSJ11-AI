@@ -22,6 +22,7 @@ import { buildContext } from "./context";
 import { saveSessionImagesToCloud } from "./drive";
 import { logError } from "./errors";
 import { HttpError } from "./http";
+import { enhanceImagePrompt } from "./imagePrompt";
 import {
   classifyImageIntent,
   draftImageCaption,
@@ -303,9 +304,12 @@ export function buildGenerationStream(opts: {
           // same as the pre-mixed image-abort behaviour.
           if (caption) emit("delta", { text: caption });
           try {
+            // Enhance only the prompt actually sent to the model (quality/style tail);
+            // the DB keeps the original imagePrompt for display / context continuity.
+            const genPrompt = enhanceImagePrompt(imagePrompt);
             const { buf, mime, width, height } = imageRef
-              ? await generateImageEdit(imagePrompt, imageRef, upstreamAbort.signal)
-              : await generateImage(imagePrompt, upstreamAbort.signal);
+              ? await generateImageEdit(genPrompt, imageRef, upstreamAbort.signal)
+              : await generateImage(genPrompt, upstreamAbort.signal);
             const { imageId, messageId } = await createImageMessage({
               sessionId,
               prompt: imagePrompt,

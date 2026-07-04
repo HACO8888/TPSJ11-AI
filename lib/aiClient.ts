@@ -13,13 +13,28 @@ const base = () => env.AI_API_BASE_URL.replace(/\/$/, "");
 const bearer = () => ({ Authorization: `Bearer ${env.AI_API_KEY}` });
 const authHeaders = () => ({ ...bearer(), "Content-Type": "application/json" });
 
+/** Per-call overrides: a specific model and/or sampling temperature. */
+export interface ChatOpts {
+  model?: string;
+  temperature?: number;
+}
+
+function chatBody(messages: ChatMessage[], stream: boolean, opts?: ChatOpts) {
+  return JSON.stringify({
+    model: opts?.model || env.AI_TEXT_MODEL,
+    messages,
+    stream,
+    ...(opts?.temperature != null ? { temperature: opts.temperature } : {}),
+  });
+}
+
 /** Non-streaming chat — the fallback path when streaming is unavailable. */
-export async function chatOnce(messages: ChatMessage[], signal?: AbortSignal) {
+export async function chatOnce(messages: ChatMessage[], signal?: AbortSignal, opts?: ChatOpts) {
   const r = await fetch(`${base()}/chat/completions`, {
     method: "POST",
     headers: authHeaders(),
     signal,
-    body: JSON.stringify({ model: env.AI_TEXT_MODEL, messages, stream: false }),
+    body: chatBody(messages, false, opts),
   }).catch(networkError);
   if (!r.ok) throw await upstreamError(r);
   const j = await r.json();
@@ -30,12 +45,16 @@ export async function chatOnce(messages: ChatMessage[], signal?: AbortSignal) {
 }
 
 /** Streaming chat — returns the raw upstream Response so the relay can read its body. */
-export async function chatStream(messages: ChatMessage[], signal?: AbortSignal): Promise<Response> {
+export async function chatStream(
+  messages: ChatMessage[],
+  signal?: AbortSignal,
+  opts?: ChatOpts,
+): Promise<Response> {
   const r = await fetch(`${base()}/chat/completions`, {
     method: "POST",
     headers: authHeaders(),
     signal,
-    body: JSON.stringify({ model: env.AI_TEXT_MODEL, messages, stream: true }),
+    body: chatBody(messages, true, opts),
   }).catch(networkError);
   if (!r.ok || !r.body) throw await upstreamError(r);
   return r;

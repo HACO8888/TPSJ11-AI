@@ -87,7 +87,10 @@ export async function classifyImageIntent(
       { role: "system", content: CLASSIFY_SYSTEM },
       { role: "user", content: userMsg },
     ];
-    const { content: raw } = await chatOnce(messages, signal);
+    // temperature:0 — this is a JSON-classification task, not creative writing.
+    // Deterministic output greatly reduces malformed-JSON parse failures (which
+    // silently degrade a genuine image request back to chat).
+    const { content: raw } = await chatOnce(messages, signal, { temperature: 0 });
     const json = extractJson(raw);
     if (json && typeof json.image === "boolean") {
       const prompt =
