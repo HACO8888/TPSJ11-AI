@@ -1,6 +1,7 @@
 import "server-only";
 import { env } from "@/lib/env";
 import { HttpError } from "@/lib/http";
+import { classifyUpstreamError } from "./upstream-errors";
 
 /** OpenAI-style multimodal content: a plain string, or text + image_url parts (vision). */
 export type ChatTextPart = { type: "text"; text: string };
@@ -184,27 +185,8 @@ async function upstreamError(r: Response): Promise<HttpError> {
     url: r.url,
     body: body.slice(0, 4000),
   };
-  if (r.status === 401) return new HttpError(502, "UPSTREAM_AUTH", "AI 服務驗證失敗", details);
-  if (r.status === 429)
-    return new HttpError(502, "UPSTREAM_RATE", "AI 服務忙碌中，請稍後再試", details);
-  // The gateway often wraps a provider quota/capacity error in a 500 body
-  // ("RESOURCE_EXHAUSTED", "quota", "no healthy provider"). Surface it as a clear,
-  // non-scary message — it's a temporary upstream limit, not a bug on our side.
-  if (/quota|exhausted|resource_exhausted|ratelimitexceeded|no healthy provider/i.test(body)) {
-    return new HttpError(
-      502,
-      "UPSTREAM_CAPACITY",
-      "AI 服務目前額度用盡或忙線中，請稍後再試",
-      details,
-    );
-  }
-  // The image model ran but returned no image — it often replies with a text
-  // description instead of an actual image, which the gateway surfaces as a 500
-  // "no image in response" / "Image editing failed". This is a prompt problem,
-  // not an outage: the caller turns it into a friendly "couldn't generate this
-  // time, try rewording" chat reply rather than a scary error banner.
-  if (/no image in response|image (?:editing|generation) failed|no image returned/i.test(body)) {
-    return new HttpError(502, "IMAGE_NO_OUTPUT", "這次沒有生成出圖片", details);
-  }
-  return new HttpError(502, "UPSTREAM", "AI 服務錯誤", details);
+  // Classification (auth / rate / capacity / no-image / generic) is a pure, unit-tested
+  // decision in lib/upstream-errors.ts; here we only attach the diagnostic details.
+  const { code, message } = classifyUpstreamError(r.status, body);
+  return new HttpError(502, code, message, details);
 }

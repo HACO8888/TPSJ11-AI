@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 import { ApiError, apiGet } from "@/lib/api/client";
+import { parseSseFrames } from "@/lib/sse";
 import type { ChatMessageDTO, PendingImage } from "@/lib/types";
 
 export interface LiveState {
@@ -111,20 +112,10 @@ export function useConversation(sessionId: string | null) {
           if (done) break;
           buf += decoder.decode(value, { stream: true });
 
-          for (;;) {
-            const idx = buf.indexOf("\n\n");
-            if (idx === -1) break;
-            const block = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-
-            let ev = "message";
-            let dataStr = "";
-            for (const line of block.split("\n")) {
-              if (line.startsWith("event:")) ev = line.slice(6).trim();
-              else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
-            }
-            if (!dataStr) continue;
-
+          const { frames, rest } = parseSseFrames(buf);
+          buf = rest;
+          for (const frame of frames) {
+            const ev = frame.event;
             let data: {
               kind?: string;
               text?: string;
@@ -134,7 +125,7 @@ export function useConversation(sessionId: string | null) {
               ref?: string;
             };
             try {
-              data = JSON.parse(dataStr);
+              data = JSON.parse(frame.data);
             } catch {
               continue;
             }
