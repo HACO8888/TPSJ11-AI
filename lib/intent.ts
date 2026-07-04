@@ -13,15 +13,18 @@ const CLASSIFY_SYSTEM =
   "請從先前對話萃取主題，產生一段具體的圖片生成描述，並 ready=true。" +
   "若使用者最新訊息是要修改／變換先前那張已生成的圖片（例如「卡通版的」「我要Q版的」「換成藍色背景」「再大一點」「伸出貓爪」「加上帽子」「換個動作」），" +
   "請從先前對話找出那張圖的主體，結合這次的修改，產生一段新的、完整且具體的圖片生成描述，image=true、ready=true。" +
-  '只輸出 JSON，不要任何其他文字：{"image": true 或 false, "ready": true 或 false, "edit": true 或 false, "prompt": "具體的圖片生成描述；若無法得出則給空字串"}。' +
+  '只輸出 JSON，不要任何其他文字：{"image": true 或 false, "ready": true 或 false, "edit": true 或 false, "prompt": "具體的圖片生成描述；若無法得出則給空字串", "caption": "給使用者看的引言文案；若 image=false 則給空字串"}。' +
   "ready 判準：能得出明確主體或內容才為 true；若完全沒有可用內容（例如一開始就只說「幫我畫」），ready 為 false。" +
-  "edit 判準：當使用者是要修改／變換『先前那張已生成的圖片』或『附上的圖片素材』（而非要一張全新、不相關的圖）時，edit=true；想要全新的圖則 edit=false。";
+  "edit 判準：當使用者是要修改／變換『先前那張已生成的圖片』或『附上的圖片素材』（而非要一張全新、不相關的圖）時，edit=true；想要全新的圖則 edit=false。" +
+  "caption 判準：當 image=true 時，另外寫一段 1～2 句、繁體中文、親切友善的引言，向使用者說明你即將為他生成的這張圖（可點出主題或風格重點，也可預告可再微調），" +
+  "語氣要假設圖片一定會成功產生。務必不要說「生成中」「請稍候」「已完成」，也不要宣稱圖片已附在這段文字裡。若 image=false，caption 給空字串。";
 
 interface Parsed {
   image?: unknown;
   ready?: unknown;
   edit?: unknown;
   prompt?: unknown;
+  caption?: unknown;
 }
 
 function extractJson(s: string): Parsed | null {
@@ -40,6 +43,13 @@ export interface ImageVerdict {
   /** True when modifying a previous/attached image (→ use it as an i2i reference). */
   edit: boolean;
   prompt: string;
+  /**
+   * A short, user-facing intro line to stream alongside the generated image (the
+   * text half of a text+image "mixed" turn). Empty when image=false. Produced by
+   * CLASSIFY_SYSTEM in the same call — no extra round-trip. Never contains a claim
+   * that the image is "done" (see the system prompt's anti-faking rule).
+   */
+  caption: string;
 }
 
 export interface HistoryTurn {
@@ -82,10 +92,46 @@ export async function classifyImageIntent(
     if (json && typeof json.image === "boolean") {
       const prompt =
         typeof json.prompt === "string" && json.prompt.trim() ? json.prompt.trim() : content;
-      return { image: json.image, ready: json.ready === true, edit: json.edit === true, prompt };
+      const caption =
+        typeof json.caption === "string" && json.caption.trim() ? json.caption.trim() : "";
+      return {
+        image: json.image,
+        ready: json.ready === true,
+        edit: json.edit === true,
+        prompt,
+        caption,
+      };
     }
   } catch {
     /* network/parse failure → treat as chat */
   }
-  return { image: false, ready: false, edit: false, prompt: content };
+  return { image: false, ready: false, edit: false, prompt: content, caption: "" };
+}
+
+const CAPTION_SYSTEM =
+  "你是「臺北市第 11 次大露營」的 AI 助理。使用者請你生成一張圖片，系統正在產生它。" +
+  "請用 1～2 句、繁體中文、親切友善的話，向使用者說明你正為他繪製的這張圖（可點出主題或風格重點，也可預告可再微調）。" +
+  "語氣假設圖片一定會成功。務必不要說「生成中」「請稍候」「已完成」，也不要宣稱圖片已附在這段文字裡，只需要一段簡短的引言。";
+
+/**
+ * Draft a short caption for a forced "/image …" request (which skips the classifier,
+ * so it has no caption yet). Best-effort: on any failure returns a neutral static
+ * line so the mixed turn always has *some* text. One cheap chatOnce; the ~23s image
+ * generation dominates, so the added latency is negligible.
+ */
+export async function draftImageCaption(prompt: string, signal?: AbortSignal): Promise<string> {
+  try {
+    const { content } = await chatOnce(
+      [
+        { role: "system", content: CAPTION_SYSTEM },
+        { role: "user", content: `我想要的圖：${prompt}` },
+      ],
+      signal,
+    );
+    const text = content.trim();
+    if (text) return text;
+  } catch {
+    /* fall through to the static caption */
+  }
+  return "好的，我來幫你畫這張圖 🔥 生成好之後如果想調整風格或細節，直接跟我說就行。";
 }

@@ -131,10 +131,23 @@ export function useConversation(sessionId: string | null) {
             }
 
             if (ev === "route") {
+              // Each route starts a fresh text buffer. Critical for the fallback case:
+              // a mixed turn streams a caption, then if generation fails it re-emits
+              // route:chat — without this reset the caption would stay in `acc` and get
+              // concatenated in front of the fallback message.
+              acc = "";
               if (data.kind === "image") {
                 setLive((l) => ({
                   ...l,
                   assistantText: null,
+                  image: { id: "gen", prompt: data.prompt ?? "", status: "loading" },
+                }));
+              } else if (data.kind === "mixed") {
+                // Text + image together: show the streaming caption AND the image
+                // placeholder (two separate live rows).
+                setLive((l) => ({
+                  ...l,
+                  assistantText: "",
                   image: { id: "gen", prompt: data.prompt ?? "", status: "loading" },
                 }));
               } else {

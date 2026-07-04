@@ -163,7 +163,10 @@ export default function AdminSessionPage() {
 
 function MessageBlock({ m }: { m: AdminMessage }) {
   const isDeleted = m.deletedAt != null;
-  const label = m.kind === "image" ? "營地助理 · 圖片" : m.role === "user" ? "使用者" : "營地助理";
+  const isImageKind = m.kind === "image" || m.kind === "mixed";
+  const label = isImageKind ? "營地助理 · 圖片" : m.role === "user" ? "使用者" : "營地助理";
+  // text / mixed / user show a content bubble; a pure image's content is the raw prompt.
+  const showText = m.kind !== "image" && !!m.content;
 
   return (
     <div className={isDeleted ? "opacity-55" : ""}>
@@ -194,28 +197,31 @@ function MessageBlock({ m }: { m: AdminMessage }) {
         </div>
       )}
 
-      {m.kind === "image" && m.imageUrl ? (
+      {/* text / mixed caption / user bubble */}
+      {showText && (
+        <div
+          className={
+            m.role === "user"
+              ? "inline-block max-w-full break-words rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-1.5"
+              : "rounded-xl rounded-tl-sm border border-line bg-surface px-4 py-3"
+          }
+        >
+          <MarkdownRenderer content={m.content} />
+        </div>
+      )}
+      {/* image (kind 'image' or 'mixed') */}
+      {m.imageUrl && (
         <a
           href={m.imageUrl}
           target="_blank"
           rel="noreferrer"
-          className="block max-w-sm overflow-hidden rounded-xl border border-line bg-surface-2"
+          className={`block max-w-sm overflow-hidden rounded-xl border border-line bg-surface-2 ${
+            showText ? "mt-1.5" : ""
+          }`}
         >
           {/* biome-ignore lint/performance/noImgElement: auth-gated dynamic BYTEA image */}
           <img src={`${m.imageUrl}?w=640`} alt={m.content} className="w-full" />
         </a>
-      ) : (
-        m.content && (
-          <div
-            className={
-              m.role === "user"
-                ? "inline-block max-w-full break-words rounded-xl rounded-tl-sm bg-surface-2 px-3.5 py-1.5"
-                : "rounded-xl rounded-tl-sm border border-line bg-surface px-4 py-3"
-            }
-          >
-            <MarkdownRenderer content={m.content} />
-          </div>
-        )
       )}
     </div>
   );

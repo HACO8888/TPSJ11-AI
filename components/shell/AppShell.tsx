@@ -44,7 +44,8 @@ export function AppShell() {
   const [cloudSaving, setCloudSaving] = useState(false);
   const [cloudDialogOpen, setCloudDialogOpen] = useState(false);
   const [cloudMsg, setCloudMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const hasGeneratedImage = convo.messages.some((m) => m.kind === "image" && !!m.imageId);
+  // Any turn carrying an image (kind 'image' OR 'mixed') → cloud save is available.
+  const hasGeneratedImage = convo.messages.some((m) => !!m.imageId);
 
   // Restore a deep-linked session from the URL. Otherwise the default is a fresh,
   // unsaved conversation — a session is only created on the first message, so

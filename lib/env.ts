@@ -9,6 +9,9 @@ const schema = z.object({
   AI_TEXT_MODEL: z.string().default("gemini-flash-latest"),
   AI_IMAGE_MODEL: z.string().default("gemini-3.1-flash-image"),
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET 至少需 32 字元"),
+  // Text+image "mixed" turns: an image reply also carries a short streamed caption.
+  // Kill-switch to fall back to the old image-only behaviour without a code change.
+  MIXED_OUTPUT: z.enum(["on", "off"]).default("on"),
 });
 
 type Env = z.infer<typeof schema>;

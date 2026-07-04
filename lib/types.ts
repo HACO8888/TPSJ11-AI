@@ -7,7 +7,8 @@ export interface SessionMeta {
 }
 
 export type Role = "user" | "assistant" | "system";
-export type Kind = "text" | "image";
+// 'mixed' = a single assistant turn with both a text caption (content) and an image.
+export type Kind = "text" | "image" | "mixed";
 
 export interface ChatMessageDTO {
   id: string;

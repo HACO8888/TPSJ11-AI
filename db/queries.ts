@@ -243,17 +243,27 @@ export async function loadContextRows(sessionId: string): Promise<ContextRow[]> 
       role: messages.role,
       kind: messages.kind,
       content: messages.content,
+      // For image / mixed turns this is the real generation prompt (mixed rows store a
+      // user-facing caption in content, so the prompt must come from the image row).
+      imagePrompt: images.prompt,
     })
     .from(messages)
+    .leftJoin(images, eq(images.id, messages.imageId))
     .where(and(eq(messages.sessionId, sessionId), isNull(messages.deletedAt)))
     .orderBy(asc(messages.createdAt));
 
   const attMap = await uploadedAttachmentsBySession(sessionId);
   return rows.map((m) => {
-    if (m.kind === "image") {
+    // image / mixed turns → a synthetic note keyed on the actual generation prompt.
+    // We deliberately do NOT feed a mixed turn's caption back as assistant speech: a
+    // caption like "這是為你生成的海報" is exactly the phrasing SYSTEM_PROMPT forbids,
+    // and echoing it into context would teach the model to fake images on later
+    // text-only turns.
+    if (m.kind === "image" || m.kind === "mixed") {
+      const subject = m.imagePrompt ?? m.content;
       return {
         role: "assistant" as const,
-        content: `〔系統紀錄：先前已為使用者生成一張圖片，主題「${m.content}」〕`,
+        content: `〔系統紀錄：先前已為使用者生成一張圖片，主題「${subject}」〕`,
       };
     }
     const role = m.role === "user" ? ("user" as const) : ("assistant" as const);
@@ -276,12 +286,14 @@ export async function loadContextRows(sessionId: string): Promise<ContextRow[]> 
  */
 export async function hasRecentImageMessage(sessionId: string, lastN = 8): Promise<boolean> {
   const rows = await db
-    .select({ kind: messages.kind })
+    .select({ imageId: messages.imageId })
     .from(messages)
     .where(and(eq(messages.sessionId, sessionId), isNull(messages.deletedAt)))
     .orderBy(desc(messages.createdAt))
     .limit(lastN);
-  return rows.some((r) => r.kind === "image");
+  // Any turn carrying an image (kind 'image' OR 'mixed') counts, so a terse edit
+  // follow-up after a text+image turn still reaches the classifier.
+  return rows.some((r) => r.imageId != null);
 }
 
 /* ----------------------------------- images ------------------------------------ */
@@ -299,7 +311,17 @@ export async function createImageMessage(params: {
   byteLen: number;
   width?: number | null;
   height?: number | null;
+  /**
+   * Optional user-facing caption. When present → a text+image "mixed" turn:
+   * kind='mixed', messages.content = caption (the raw generation prompt is still
+   * kept in images.prompt). A blank/whitespace caption normalises back to a plain
+   * kind='image' turn with content = prompt (so the prompt is never lost).
+   */
+  caption?: string | null;
 }): Promise<CreatedImage> {
+  const cap = params.caption?.trim();
+  const kind = cap ? "mixed" : "image";
+  const content = cap || params.prompt;
   return db.transaction(async (tx) => {
     const [img] = await tx
       .insert(images)
@@ -319,8 +341,8 @@ export async function createImageMessage(params: {
       .values({
         sessionId: params.sessionId,
         role: "assistant",
-        kind: "image",
-        content: params.prompt,
+        kind,
+        content,
         imageId: img.id,
       })
       .returning({ id: messages.id });

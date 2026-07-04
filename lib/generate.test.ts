@@ -14,6 +14,7 @@ function deps(
     ready: false,
     edit: false,
     prompt: "",
+    caption: "",
     ...verdict,
   };
   return {

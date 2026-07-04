@@ -216,32 +216,44 @@ export function MessageList({ messages, live, busy, onRegenerate }: Props) {
             <EmptyConversation />
           ) : (
             <>
-              {messages.map((m) =>
-                m.kind === "image" && m.imageUrl ? (
+              {messages.map((m) => {
+                if (m.role === "user") {
+                  return (
+                    <Row key={m.id} kind="user" label="你" time={formatTime(m.createdAt)}>
+                      <UserMessage message={m} busy={busy} onRegenerate={onRegenerate} />
+                    </Row>
+                  );
+                }
+                // Assistant turn, data-driven so one rule covers text / image / mixed:
+                //  • text bubble when there's user-facing content and kind !== 'image'
+                //    (a pure image's content is the raw prompt, shown only as the alt).
+                //  • the image when an imageUrl is present.
+                //  • mixed → both, stacked.
+                const hasImage = !!m.imageUrl;
+                const showText = m.kind !== "image" && !!m.content;
+                const isImageKind = m.kind === "image" || m.kind === "mixed";
+                return (
                   <Row
                     key={m.id}
-                    kind="image"
-                    label="營地助理 · 圖片"
+                    kind={hasImage ? "image" : "assistant"}
+                    label={hasImage ? "營地助理 · 圖片" : "營地助理"}
                     time={formatTime(m.createdAt)}
+                    tokens={m.kind === "text" ? totalTokens(m.usage) : null}
                   >
-                    <ImageMessage imageUrl={m.imageUrl} prompt={m.content} />
+                    {showText && <AssistantText content={m.content} partial={m.partial} />}
+                    {hasImage && m.imageUrl && (
+                      <div className={showText ? "mt-2" : undefined}>
+                        <ImageMessage imageUrl={m.imageUrl} prompt={m.content} />
+                      </div>
+                    )}
+                    {/* image/mixed whose image was removed by an admin → don't dump the
+                        raw prompt as text; show a small placeholder instead. */}
+                    {isImageKind && !hasImage && !showText && (
+                      <p className="font-mono text-[11px] text-muted">（圖片已移除）</p>
+                    )}
                   </Row>
-                ) : m.role === "user" ? (
-                  <Row key={m.id} kind="user" label="你" time={formatTime(m.createdAt)}>
-                    <UserMessage message={m} busy={busy} onRegenerate={onRegenerate} />
-                  </Row>
-                ) : (
-                  <Row
-                    key={m.id}
-                    kind="assistant"
-                    label="營地助理"
-                    time={formatTime(m.createdAt)}
-                    tokens={totalTokens(m.usage)}
-                  >
-                    <AssistantText content={m.content} partial={m.partial} />
-                  </Row>
-                ),
-              )}
+                );
+              })}
 
               {/* Optimistic + streaming rows */}
               {live.userText && (

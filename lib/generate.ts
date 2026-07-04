@@ -9,6 +9,7 @@ import {
   loadContextRows,
   persistAssistant,
 } from "@/db/queries";
+import { env } from "@/lib/env";
 import {
   type ChatContent,
   chatOnce,
@@ -23,6 +24,7 @@ import { logError } from "./errors";
 import { HttpError } from "./http";
 import {
   classifyImageIntent,
+  draftImageCaption,
   type HistoryTurn,
   hasCloudSaveCue,
   hasImageCue,
@@ -78,6 +80,8 @@ export interface RouteResult {
   imageRef: ImageReference | null;
   /** an image was wanted but the request is too vague → canned clarification, no LLM call. */
   vagueImage: boolean;
+  /** the classifier's user-facing caption (text half of a mixed turn); "" for forced/vague. */
+  caption: string;
 }
 
 export interface RouteDeps {
@@ -107,11 +111,13 @@ export async function decideImageRoute(input: RouteInput, deps: RouteDeps): Prom
   let imagePrompt = "";
   let imageRef: ImageReference | null = null;
   let vagueImage = false;
+  let caption = "";
 
   if (forced && forcedPrompt) {
     kind = "image";
     imagePrompt = forcedPrompt;
     if (hasAttachment) imageRef = attachments[0];
+    // forced skips the classifier → no caption yet; the caller drafts one.
   } else if (hasAttachment) {
     // Uploaded 素材 → either transform it into a new image, or answer about it.
     const verdict = await deps.classify(content, history, deps.signal, { hasAttachment: true });
@@ -119,6 +125,7 @@ export async function decideImageRoute(input: RouteInput, deps: RouteDeps): Prom
       kind = "image";
       imagePrompt = verdict.prompt;
       imageRef = attachments[0];
+      caption = verdict.caption;
     }
     // else → chat branch does vision Q&A over the attachment(s).
   } else if (hasImageCue(content) || (recentImage && isLikelyImageEdit(content))) {
@@ -133,6 +140,7 @@ export async function decideImageRoute(input: RouteInput, deps: RouteDeps): Prom
       if (verdict.image && verdict.ready && verdict.prompt) {
         kind = "image";
         imagePrompt = verdict.prompt;
+        caption = verdict.caption;
         // A genuine edit of the previous image → reuse it as the i2i reference.
         if (verdict.edit && recentImage) imageRef = await deps.getEditRef();
       } else if (verdict.image) {
@@ -141,7 +149,7 @@ export async function decideImageRoute(input: RouteInput, deps: RouteDeps): Prom
     }
   }
 
-  return { kind, imagePrompt, imageRef, vagueImage };
+  return { kind, imagePrompt, imageRef, vagueImage, caption };
 }
 
 /* ------------------------------ generation stream ------------------------------ */
@@ -239,7 +247,13 @@ export function buildGenerationStream(opts: {
         const hasAttachment = attachments.length > 0;
 
         // ---- Route: image vs chat ----
-        const { kind, imagePrompt, imageRef, vagueImage } = await decideImageRoute(
+        const {
+          kind,
+          imagePrompt,
+          imageRef,
+          vagueImage,
+          caption: routeCaption,
+        } = await decideImageRoute(
           {
             content,
             forced,
@@ -274,7 +288,20 @@ export function buildGenerationStream(opts: {
         // assistant can ask for a clearer prompt / explain it couldn't generate).
         let fallbackHint: "rejected" | "no-output" | null = null;
         if (kind === "image") {
-          emit("route", { kind: "image", prompt: imagePrompt });
+          // Text+image "mixed" turn: stream a short caption first (instant), then the
+          // ~23s image. MIXED_OUTPUT=off falls back to the classic image-only reply.
+          // The caption comes free from the classifier; a forced "/image" drafts one.
+          const mixed = env.MIXED_OUTPUT === "on";
+          const caption = mixed
+            ? routeCaption || (await draftImageCaption(imagePrompt, upstreamAbort.signal))
+            : "";
+          emit("route", { kind: mixed ? "mixed" : "image", prompt: imagePrompt });
+          // Caption is NOT accumulated into `full`: on a generation failure the chat
+          // fallback re-emits route:chat (client resets its buffer) and persists only
+          // the fallback text; the mixed row's caption is written by createImageMessage
+          // on success. Aborting mid-generation drops the shown caption (no persist) —
+          // same as the pre-mixed image-abort behaviour.
+          if (caption) emit("delta", { text: caption });
           try {
             const { buf, mime, width, height } = imageRef
               ? await generateImageEdit(imagePrompt, imageRef, upstreamAbort.signal)
@@ -287,6 +314,7 @@ export function buildGenerationStream(opts: {
               byteLen: buf.length,
               width,
               height,
+              caption: mixed ? caption : null,
             });
             emit("image", {
               imageId,
@@ -294,7 +322,7 @@ export function buildGenerationStream(opts: {
               imageUrl: `/api/images/${imageId}`,
               prompt: imagePrompt,
             });
-            emit("done", {});
+            emit("done", { assistantMessageId: messageId });
             controller.close();
             return;
           } catch (e) {
