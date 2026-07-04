@@ -12,6 +12,11 @@ const schema = z.object({
   // Text+image "mixed" turns: an image reply also carries a short streamed caption.
   // Kill-switch to fall back to the old image-only behaviour without a code change.
   MIXED_OUTPUT: z.enum(["on", "off"]).default("on"),
+  // Strategy A (experimental): try a single native text+image call to the image model
+  // via /chat/completions before the classic two-step. Default off — enable per env
+  // only after scripts/probe-interleaved.ts confirms the gateway returns images there.
+  // Any failure/no-image falls back to the default flow, so this is safe to leave off.
+  AI_NATIVE_INTERLEAVE: z.enum(["on", "off"]).default("off"),
 });
 
 type Env = z.infer<typeof schema>;

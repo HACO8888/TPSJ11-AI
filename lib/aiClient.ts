@@ -133,6 +133,101 @@ export async function generateImageEdit(
   return { buf, mime, width: dims?.width ?? null, height: dims?.height ?? null };
 }
 
+/* --------------------- Strategy A: native single-call text+image ---------------- */
+
+/**
+ * Build a GeneratedImage from raw base64 (sniff the mime/dims; fall back to a hint).
+ */
+function b64ToImage(b64: string, mimeHint?: string): GeneratedImage {
+  const buf = Buffer.from(b64, "base64");
+  const sniffed = sniffMime(buf);
+  const mime = sniffed !== "application/octet-stream" ? sniffed : (mimeHint ?? "image/png");
+  const dims = imageSize(buf);
+  return { buf, mime, width: dims?.width ?? null, height: dims?.height ?? null };
+}
+
+function dataUriToImage(uri: string): GeneratedImage | null {
+  const m = uri.match(/^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i);
+  return m ? b64ToImage(m[2], m[1]) : null;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: probing an unknown gateway response shape
+function extractImageFromMessage(msg: any): GeneratedImage | null {
+  if (!msg) return null;
+  // 1. message.images[] — [{image_url:{url:"data:…"}}] | [{b64_json}] | ["data:…"]
+  if (Array.isArray(msg.images)) {
+    for (const im of msg.images) {
+      if (typeof im === "string") {
+        const r = dataUriToImage(im);
+        if (r) return r;
+      }
+      if (im?.image_url?.url) {
+        const r = dataUriToImage(im.image_url.url);
+        if (r) return r;
+      }
+      if (im?.b64_json) return b64ToImage(im.b64_json);
+    }
+  }
+  // 2. content as an array of parts (OpenAI image_url / Gemini inline_data)
+  if (Array.isArray(msg.content)) {
+    for (const part of msg.content) {
+      if (part?.type === "image_url" && part.image_url?.url) {
+        const r = dataUriToImage(part.image_url.url);
+        if (r) return r;
+      }
+      if (part?.inline_data?.data)
+        return b64ToImage(part.inline_data.data, part.inline_data.mime_type);
+    }
+  }
+  // 3. a data: image embedded in a content string (e.g. markdown)
+  if (typeof msg.content === "string") {
+    const m = msg.content.match(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/i);
+    if (m) return dataUriToImage(m[0]);
+  }
+  return null;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: probing an unknown gateway response shape
+function extractText(content: any): string {
+  if (typeof content === "string") {
+    // strip any inline data-uri markdown image so the caption is clean text
+    return content.replace(/!\[[^\]]*\]\(data:image\/[^)]+\)/gi, "").trim();
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (typeof p?.text === "string" ? p.text : ""))
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
+/**
+ * Strategy A (experimental, flag-gated by the caller): ask the IMAGE model on
+ * /chat/completions for a single native text+image reply. Non-streaming so the caller
+ * only commits once it knows whether an image came back (avoids double-text if it must
+ * fall back). Returns the text and the image (null when the response carried no image →
+ * the caller falls back to the classic two-step flow).
+ */
+export async function imageChatOnce(
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<{ text: string; image: GeneratedImage | null }> {
+  const r = await fetch(`${base()}/chat/completions`, {
+    method: "POST",
+    headers: authHeaders(),
+    signal,
+    body: JSON.stringify({
+      model: env.AI_IMAGE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  }).catch(networkError);
+  if (!r.ok) throw await upstreamError(r);
+  const j = await r.json();
+  const msg = j?.choices?.[0]?.message;
+  return { text: extractText(msg?.content), image: extractImageFromMessage(msg) };
+}
+
 /* --------------------------------- helpers ------------------------------------- */
 
 export function sniffMime(b: Buffer): string {

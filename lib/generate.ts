@@ -17,6 +17,7 @@ import {
   generateImage,
   generateImageEdit,
   type ImageReference,
+  imageChatOnce,
 } from "./aiClient";
 import { buildContext } from "./context";
 import { saveSessionImagesToCloud } from "./drive";
@@ -289,6 +290,53 @@ export function buildGenerationStream(opts: {
         // assistant can ask for a clearer prompt / explain it couldn't generate).
         let fallbackHint: "rejected" | "no-output" | null = null;
         if (kind === "image") {
+          // ---- Strategy A (experimental, flag-gated): single native text+image call ----
+          // Tried silently and non-streaming so a no-image response can fall back to the
+          // classic two-step flow below without having streamed half a reply (avoids the
+          // double-text problem). i2i edits keep the dedicated /images/edits path.
+          if (env.AI_NATIVE_INTERLEAVE === "on" && !imageRef) {
+            try {
+              const native = await imageChatOnce(
+                enhanceImagePrompt(imagePrompt),
+                upstreamAbort.signal,
+              );
+              if (native.image) {
+                const cap = env.MIXED_OUTPUT === "on" ? native.text.trim() || routeCaption : "";
+                const { imageId, messageId } = await createImageMessage({
+                  sessionId,
+                  prompt: imagePrompt,
+                  bytes: native.image.buf,
+                  mime: native.image.mime,
+                  byteLen: native.image.buf.length,
+                  width: native.image.width,
+                  height: native.image.height,
+                  caption: cap || null,
+                });
+                emit("route", { kind: cap ? "mixed" : "image", prompt: imagePrompt });
+                if (cap) emit("delta", { text: cap });
+                emit("image", {
+                  imageId,
+                  messageId,
+                  imageUrl: `/api/images/${imageId}`,
+                  prompt: imagePrompt,
+                });
+                emit("done", { assistantMessageId: messageId });
+                controller.close();
+                return;
+              }
+              // no image in the native reply → fall through to Strategy B
+            } catch (e) {
+              await logError({
+                scope: "generate.native-interleave",
+                code: "NATIVE_FALLBACK",
+                message: "原生交錯輸出失敗或無圖，回落標準生圖流程",
+                detail: e instanceof HttpError ? (e.details ?? e) : e,
+                sessionId,
+              }).catch(() => {});
+              // fall through to Strategy B
+            }
+          }
+
           // Text+image "mixed" turn: stream a short caption first (instant), then the
           // ~23s image. MIXED_OUTPUT=off falls back to the classic image-only reply.
           // The caption comes free from the classifier; a forced "/image" drafts one.
