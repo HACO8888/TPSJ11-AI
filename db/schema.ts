@@ -101,7 +101,16 @@ export const images = pgTable(
     prompt: text("prompt"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("images_session_idx").on(t.sessionId)],
+  (t) => [
+    index("images_session_idx").on(t.sessionId),
+    // The circular FK join key (images.messageId → messages.id): used by
+    // getLatestGeneratedImage / listGeneratedImages (innerJoin messages) and by the
+    // ON DELETE cascade/set-null scans. Unindexed before this.
+    index("images_message_id_idx").on(t.messageId),
+    // Covers the two hot filters — getMessageAttachments / uploadedAttachmentsBySession
+    // (source='uploaded') and listGeneratedImages (source='generated', ASC by created).
+    index("images_session_source_created_idx").on(t.sessionId, t.source, t.createdAt),
+  ],
 );
 
 /**
