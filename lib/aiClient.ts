@@ -58,7 +58,7 @@ export async function generateImage(prompt: string, signal?: AbortSignal): Promi
   if (!r.ok) throw await upstreamError(r);
   const j = await r.json();
   const b64 = j?.data?.[0]?.b64_json as string | undefined;
-  if (!b64) throw new HttpError(502, "UPSTREAM_BAD", "圖片產生失敗");
+  if (!b64) throw new HttpError(502, "IMAGE_NO_OUTPUT", "這次沒有生成出圖片");
   const buf = Buffer.from(b64, "base64");
   const mime = sniffMime(buf);
   const dims = imageSize(buf);
@@ -106,7 +106,7 @@ export async function generateImageEdit(
   if (!r.ok) throw await upstreamError(r);
   const j = await r.json();
   const b64 = j?.data?.[0]?.b64_json as string | undefined;
-  if (!b64) throw new HttpError(502, "UPSTREAM_BAD", "圖片產生失敗");
+  if (!b64) throw new HttpError(502, "IMAGE_NO_OUTPUT", "這次沒有生成出圖片");
   const buf = Buffer.from(b64, "base64");
   const mime = sniffMime(buf);
   const dims = imageSize(buf);
@@ -197,6 +197,14 @@ async function upstreamError(r: Response): Promise<HttpError> {
       "AI 服務目前額度用盡或忙線中，請稍後再試",
       details,
     );
+  }
+  // The image model ran but returned no image — it often replies with a text
+  // description instead of an actual image, which the gateway surfaces as a 500
+  // "no image in response" / "Image editing failed". This is a prompt problem,
+  // not an outage: the caller turns it into a friendly "couldn't generate this
+  // time, try rewording" chat reply rather than a scary error banner.
+  if (/no image in response|image (?:editing|generation) failed|no image returned/i.test(body)) {
+    return new HttpError(502, "IMAGE_NO_OUTPUT", "這次沒有生成出圖片", details);
   }
   return new HttpError(502, "UPSTREAM", "AI 服務錯誤", details);
 }

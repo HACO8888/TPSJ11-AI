@@ -149,6 +149,7 @@ export function buildGenerationStream(opts: {
         let imagePrompt = "";
         let imageRef: ImageReference | null = null;
         let imageFallback = false;
+        let imageNoOutput = false;
         let vagueImage = false;
         if (forced && forcedPrompt) {
           kind = "image";
@@ -244,19 +245,35 @@ export function buildGenerationStream(opts: {
               controller.close();
               return;
             }
-            // 400/422 = the image model rejected the prompt (too vague / not an
-            // image request). Fall back to a chat reply so the assistant can ask
-            // for a clearer description instead of surfacing a confusing error.
-            if (upstreamStatus !== 400 && upstreamStatus !== 422) throw e;
-            await logError({
-              scope: "generate.image-fallback",
-              code: "IMAGE_REJECTED",
-              status: upstreamStatus,
-              message: "圖片 prompt 被拒，改用對話回覆",
-              detail: e instanceof HttpError ? e.details : e,
-              sessionId,
-            });
-            imageFallback = true;
+            // The image model ran but produced no image (it replied with text
+            // instead of an image, or the gateway hiccupped). Don't surface a
+            // scary error — fall back to a chat reply that tells the user it
+            // couldn't generate this time and nudges them to reword the prompt.
+            if (e instanceof HttpError && e.code === "IMAGE_NO_OUTPUT") {
+              await logError({
+                scope: "generate.image-fallback",
+                code: "IMAGE_NO_OUTPUT",
+                status: upstreamStatus,
+                message: "生不出圖片，改用對話回覆並引導使用者改寫 prompt",
+                detail: e.details ?? e,
+                sessionId,
+              });
+              imageNoOutput = true;
+            } else {
+              // 400/422 = the image model rejected the prompt (too vague / not an
+              // image request). Fall back to a chat reply so the assistant can ask
+              // for a clearer description instead of surfacing a confusing error.
+              if (upstreamStatus !== 400 && upstreamStatus !== 422) throw e;
+              await logError({
+                scope: "generate.image-fallback",
+                code: "IMAGE_REJECTED",
+                status: upstreamStatus,
+                message: "圖片 prompt 被拒，改用對話回覆",
+                detail: e instanceof HttpError ? e.details : e,
+                sessionId,
+              });
+              imageFallback = true;
+            }
           }
         }
 
@@ -288,6 +305,16 @@ export function buildGenerationStream(opts: {
               "提示：使用者剛才的訊息看起來想生成圖片，但描述不夠具體。" +
               "請用最多兩句話、簡短友善地詢問他想要的圖片內容（主題、風格、場景即可），" +
               "不要列出範例清單或長篇說明，也不要說自己無法生成圖片。",
+          });
+        }
+        if (imageNoOutput) {
+          payload.push({
+            role: "system",
+            content:
+              "提示：使用者剛才想生成圖片，我們已嘗試生成，但這次圖片服務沒有成功產生出圖片。" +
+              "請用最多兩三句話、簡短友善地告訴他這次沒能生成出圖片，" +
+              "並具體建議他把描述改得更清楚具體（例如補上主題、風格、場景、顏色或細節），或換個說法後再試一次。" +
+              "語氣要親切、帶點鼓勵，不要列出長篇範例清單，也不要說自己完全沒有生成圖片的能力。",
           });
         }
 
