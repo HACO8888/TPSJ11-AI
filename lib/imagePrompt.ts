@@ -24,6 +24,27 @@ export interface ImagePreset {
 
 const QUALITY_TAIL = "高解析度、細節清晰、構圖完整、色彩協調、專業質感";
 
+// A flat white/plain background is wanted (logo / emblem / nametag / certificate /
+// sticker / explicit "white/plain/solid background"). Deliberately conservative:
+// scenic illustrations (poster / map / a white animal on a colourful scene) must NOT
+// match, since post-processing would blow out their real highlights. Note bare 白/白色
+// alone don't match — only 白底 / 白色背景 / 純白 etc.
+const FLAT_WHITE =
+  /純白|純色背景|白底|白色背景|乾淨背景|透明背景|logo|emblem|隊徽|徽章|名牌|識別證|證書|獎狀|貼紙|sticker|nametag|name\s?tag|certificate|badge|plain\s+(?:white\s+|solid\s+)?background|solid\s+(?:white\s+)?background|flat\s+background|white\s+back(?:ground|drop)|clean\s+background|transparent\s+background/i;
+
+/**
+ * True when the prompt asks for a flat/plain white-background graphic — the case where
+ * the image model tends to render a *textured* off-white (which JPEG then turns into
+ * visible noise), so we both harden the prompt and post-process the background to pure
+ * white. See lib/imageClean.ts.
+ */
+export function wantsFlatWhite(text: string): boolean {
+  return FLAT_WHITE.test(text);
+}
+
+const FLAT_WHITE_DIRECTIVE =
+  "背景必須是單一純白平面 #FFFFFF，像去背後乾淨地放在純白上，完全沒有任何紋理、漸層、陰影、雜點、污漬、做舊、復古、磨損、斑駁、網格、紙張或布料質感，乾淨俐落的向量插畫風格";
+
 function trimTail(s: string): string {
   return s.replace(/[。，、\s]+$/u, "").trim();
 }
@@ -35,10 +56,13 @@ function trimTail(s: string): string {
  * punctuation so we never emit "。。".
  */
 export function enhanceImagePrompt(raw: string, preset?: ImagePreset): string {
+  // Harden the prompt at the source when a flat white background is wanted.
+  const flat = wantsFlatWhite(raw) || (preset ? wantsFlatWhite(preset.style) : false);
   const parts = [
     raw,
     preset?.style ?? "",
     preset?.aspect ? `畫面比例約 ${preset.aspect}` : "",
+    flat ? FLAT_WHITE_DIRECTIVE : "",
     QUALITY_TAIL,
   ]
     .map(trimTail)

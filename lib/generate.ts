@@ -24,7 +24,8 @@ import { saveSessionImagesToCloud } from "./drive";
 import { logError } from "./errors";
 import { HttpError } from "./http";
 import { acquireImageSlot, releaseImageSlot } from "./image-quota";
-import { enhanceImagePrompt } from "./imagePrompt";
+import { whitenBackground } from "./imageClean";
+import { enhanceImagePrompt, wantsFlatWhite } from "./imagePrompt";
 import {
   classifyImageIntent,
   draftImageCaption,
@@ -374,17 +375,22 @@ export function buildGenerationStream(opts: {
               // Enhance only the prompt actually sent to the model (quality/style tail);
               // the DB keeps the original imagePrompt for display / context continuity.
               const genPrompt = enhanceImagePrompt(imagePrompt);
-              const { buf, mime, width, height } = imageRef
+              const gen = imageRef
                 ? await generateImageEdit(genPrompt, imageRef, upstreamAbort.signal)
                 : await generateImage(genPrompt, upstreamAbort.signal);
+              // Flat-background graphics (logo/nametag/…): snap the model's textured
+              // near-white to pure white so it doesn't surface as JPEG noise. Photos /
+              // scenes are left untouched (wantsFlatWhite is conservative).
+              const bytes = wantsFlatWhite(imagePrompt) ? await whitenBackground(gen.buf) : gen.buf;
+              const mime = bytes === gen.buf ? gen.mime : "image/jpeg";
               const { imageId, messageId } = await createImageMessage({
                 sessionId,
                 prompt: imagePrompt,
-                bytes: buf,
+                bytes,
                 mime,
-                byteLen: buf.length,
-                width,
-                height,
+                byteLen: bytes.length,
+                width: gen.width,
+                height: gen.height,
                 caption: mixed ? caption : null,
               });
               emit("image", {
