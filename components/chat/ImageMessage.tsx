@@ -67,10 +67,14 @@ export function ImageMessage({ imageUrl, prompt }: { imageUrl: string; prompt: s
   const [downloading, setDownloading] = useState(false);
 
   const filename = `tpsj11-${prompt.slice(0, 20).trim() || "image"}.jpg`;
-  // Downsized renditions for display so the chat view loads fast; the full original
-  // (imageUrl, no ?w) is only fetched for the 原圖 download.
-  const thumbSrc = `${imageUrl}?w=1024`;
-  const zoomSrc = `${imageUrl}?w=1280`;
+  // Server-recompressed renditions (mozjpeg q80 → light, ~20× smaller than the ~8MB
+  // original) rather than the raw bytes, so the chat view still loads fast. We serve
+  // them at a LARGE width, not a tiny thumbnail, because right-click → "open image in
+  // new tab" targets this exact src: a 1024px thumbnail opened full-screen looked
+  // shrunken. 1600/2048px keeps that opened view crisp while the payload stays small.
+  // The full original (imageUrl, no ?w) is still only fetched for the 原圖 download.
+  const thumbSrc = `${imageUrl}?w=1600`;
+  const zoomSrc = `${imageUrl}?w=2048`;
 
   async function handleDownload() {
     setDownloading(true);
