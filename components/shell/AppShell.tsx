@@ -31,6 +31,9 @@ export function AppShell() {
   const [pendingMessage, setPendingMessage] = useState<{ text: string; files?: File[] } | null>(
     null,
   );
+  // Composer prefill (template chips / empty-state example cards). Bumping nonce re-applies.
+  const [prefill, setPrefill] = useState<{ text: string; nonce: number }>({ text: "", nonce: 0 });
+  const applyPrefill = (text: string) => setPrefill((p) => ({ text, nonce: p.nonce + 1 }));
 
   const sessionsQ = useSessions();
   const sessions = sessionsQ.data ?? [];
@@ -217,10 +220,12 @@ export function AppShell() {
             live={convo.live}
             busy={busy}
             onRegenerate={convo.regenerate}
+            onPickExample={applyPrefill}
           />
           <Composer
             busy={busy}
             canUpload={meQ.data?.canUpload ?? false}
+            prefill={prefill}
             onSend={handleSend}
             onStop={convo.stop}
           />

@@ -23,6 +23,7 @@ import { buildContext } from "./context";
 import { saveSessionImagesToCloud } from "./drive";
 import { logError } from "./errors";
 import { HttpError } from "./http";
+import { acquireImageSlot, releaseImageSlot } from "./image-quota";
 import { enhanceImagePrompt } from "./imagePrompt";
 import {
   classifyImageIntent,
@@ -163,11 +164,12 @@ export async function decideImageRoute(input: RouteInput, deps: RouteDeps): Prom
  */
 export function buildGenerationStream(opts: {
   sessionId: string;
+  userId: string;
   content: string;
   userMessageId: string;
   signal: AbortSignal;
 }): ReadableStream<Uint8Array> {
-  const { sessionId, content, userMessageId, signal } = opts;
+  const { sessionId, userId, content, userMessageId, signal } = opts;
 
   const encoder = new TextEncoder();
   const sse = (event: SseEventName, data: unknown) =>
@@ -290,139 +292,159 @@ export function buildGenerationStream(opts: {
         // assistant can ask for a clearer prompt / explain it couldn't generate).
         let fallbackHint: "rejected" | "no-output" | null = null;
         if (kind === "image") {
-          // ---- Strategy A (experimental, flag-gated): single native text+image call ----
-          // Tried silently and non-streaming so a no-image response can fall back to the
-          // classic two-step flow below without having streamed half a reply (avoids the
-          // double-text problem). i2i edits keep the dedicated /images/edits path.
-          if (env.AI_NATIVE_INTERLEAVE === "on" && !imageRef) {
-            try {
-              const native = await imageChatOnce(
-                enhanceImagePrompt(imagePrompt),
-                upstreamAbort.signal,
-              );
-              if (native.image) {
-                const cap = env.MIXED_OUTPUT === "on" ? native.text.trim() || routeCaption : "";
-                const { imageId, messageId } = await createImageMessage({
+          // Per-user image quota / concurrency guard. Over-limit degrades to a friendly
+          // chat reply (never a scary error). The slot is released in the finally that
+          // wraps the whole branch — covering success, fall-through-to-chat, and throws.
+          const slot = await acquireImageSlot(userId);
+          if (!slot.ok) {
+            emit("route", { kind: "chat" });
+            const msg =
+              slot.reason === "daily"
+                ? "今天的生圖次數已經達到上限囉，明天再來吧！文字問答仍可正常使用 🙂"
+                : "你已經有一張圖正在生成中，請等它完成後再送下一張 🙏";
+            const saved = await persistAssistant(sessionId, msg, null, false);
+            emit("delta", { text: msg });
+            emit("done", { assistantMessageId: saved.id });
+            controller.close();
+            return;
+          }
+          try {
+            // ---- Strategy A (experimental, flag-gated): single native text+image call ----
+            // Tried silently and non-streaming so a no-image response can fall back to the
+            // classic two-step flow below without having streamed half a reply (avoids the
+            // double-text problem). i2i edits keep the dedicated /images/edits path.
+            if (env.AI_NATIVE_INTERLEAVE === "on" && !imageRef) {
+              try {
+                const native = await imageChatOnce(
+                  enhanceImagePrompt(imagePrompt),
+                  upstreamAbort.signal,
+                );
+                if (native.image) {
+                  const cap = env.MIXED_OUTPUT === "on" ? native.text.trim() || routeCaption : "";
+                  const { imageId, messageId } = await createImageMessage({
+                    sessionId,
+                    prompt: imagePrompt,
+                    bytes: native.image.buf,
+                    mime: native.image.mime,
+                    byteLen: native.image.buf.length,
+                    width: native.image.width,
+                    height: native.image.height,
+                    caption: cap || null,
+                  });
+                  emit("route", { kind: cap ? "mixed" : "image", prompt: imagePrompt });
+                  if (cap) emit("delta", { text: cap });
+                  emit("image", {
+                    imageId,
+                    messageId,
+                    imageUrl: `/api/images/${imageId}`,
+                    prompt: imagePrompt,
+                  });
+                  emit("done", { assistantMessageId: messageId });
+                  controller.close();
+                  return;
+                }
+                // no image in the native reply → fall through to Strategy B
+              } catch (e) {
+                await logError({
+                  scope: "generate.native-interleave",
+                  code: "NATIVE_FALLBACK",
+                  message: "原生交錯輸出失敗或無圖，回落標準生圖流程",
+                  detail: e instanceof HttpError ? (e.details ?? e) : e,
                   sessionId,
-                  prompt: imagePrompt,
-                  bytes: native.image.buf,
-                  mime: native.image.mime,
-                  byteLen: native.image.buf.length,
-                  width: native.image.width,
-                  height: native.image.height,
-                  caption: cap || null,
-                });
-                emit("route", { kind: cap ? "mixed" : "image", prompt: imagePrompt });
-                if (cap) emit("delta", { text: cap });
-                emit("image", {
-                  imageId,
-                  messageId,
-                  imageUrl: `/api/images/${imageId}`,
-                  prompt: imagePrompt,
-                });
-                emit("done", { assistantMessageId: messageId });
+                }).catch(() => {});
+                // fall through to Strategy B
+              }
+            }
+
+            // Text+image "mixed" turn: stream a short caption first (instant), then the
+            // ~23s image. MIXED_OUTPUT=off falls back to the classic image-only reply.
+            // The caption comes free from the classifier; a forced "/image" drafts one.
+            const mixed = env.MIXED_OUTPUT === "on";
+            const caption = mixed
+              ? routeCaption || (await draftImageCaption(imagePrompt, upstreamAbort.signal))
+              : "";
+            emit("route", { kind: mixed ? "mixed" : "image", prompt: imagePrompt });
+            // Caption is NOT accumulated into `full`: on a generation failure the chat
+            // fallback re-emits route:chat (client resets its buffer) and persists only
+            // the fallback text; the mixed row's caption is written by createImageMessage
+            // on success. Aborting mid-generation drops the shown caption (no persist) —
+            // same as the pre-mixed image-abort behaviour.
+            if (caption) emit("delta", { text: caption });
+            try {
+              // Enhance only the prompt actually sent to the model (quality/style tail);
+              // the DB keeps the original imagePrompt for display / context continuity.
+              const genPrompt = enhanceImagePrompt(imagePrompt);
+              const { buf, mime, width, height } = imageRef
+                ? await generateImageEdit(genPrompt, imageRef, upstreamAbort.signal)
+                : await generateImage(genPrompt, upstreamAbort.signal);
+              const { imageId, messageId } = await createImageMessage({
+                sessionId,
+                prompt: imagePrompt,
+                bytes: buf,
+                mime,
+                byteLen: buf.length,
+                width,
+                height,
+                caption: mixed ? caption : null,
+              });
+              emit("image", {
+                imageId,
+                messageId,
+                imageUrl: `/api/images/${imageId}`,
+                prompt: imagePrompt,
+              });
+              emit("done", { assistantMessageId: messageId });
+              controller.close();
+              return;
+            } catch (e) {
+              const upstreamStatus =
+                e instanceof HttpError && e.details && typeof e.details === "object"
+                  ? (e.details as { upstreamStatus?: number }).upstreamStatus
+                  : undefined;
+              const code = e instanceof HttpError ? e.code : undefined;
+              const action = imageFailureAction(code, upstreamStatus);
+
+              if (action === "capacity") {
+                // Upstream quota/capacity exhausted → a calm chat message, not a scary
+                // error banner (temporary provider limit, not a user/prompt issue).
+                emit("route", { kind: "chat" });
+                const msg =
+                  "圖片產生服務目前額度用盡或忙線中 🙏，請稍後再試（通常過一段時間會自動恢復）。";
+                const saved = await persistAssistant(sessionId, msg, null, false);
+                emit("delta", { text: msg });
+                emit("done", { assistantMessageId: saved.id });
                 controller.close();
                 return;
               }
-              // no image in the native reply → fall through to Strategy B
-            } catch (e) {
-              await logError({
-                scope: "generate.native-interleave",
-                code: "NATIVE_FALLBACK",
-                message: "原生交錯輸出失敗或無圖，回落標準生圖流程",
-                detail: e instanceof HttpError ? (e.details ?? e) : e,
-                sessionId,
-              }).catch(() => {});
-              // fall through to Strategy B
-            }
-          }
+              if (action === "rethrow") throw e;
 
-          // Text+image "mixed" turn: stream a short caption first (instant), then the
-          // ~23s image. MIXED_OUTPUT=off falls back to the classic image-only reply.
-          // The caption comes free from the classifier; a forced "/image" drafts one.
-          const mixed = env.MIXED_OUTPUT === "on";
-          const caption = mixed
-            ? routeCaption || (await draftImageCaption(imagePrompt, upstreamAbort.signal))
-            : "";
-          emit("route", { kind: mixed ? "mixed" : "image", prompt: imagePrompt });
-          // Caption is NOT accumulated into `full`: on a generation failure the chat
-          // fallback re-emits route:chat (client resets its buffer) and persists only
-          // the fallback text; the mixed row's caption is written by createImageMessage
-          // on success. Aborting mid-generation drops the shown caption (no persist) —
-          // same as the pre-mixed image-abort behaviour.
-          if (caption) emit("delta", { text: caption });
-          try {
-            // Enhance only the prompt actually sent to the model (quality/style tail);
-            // the DB keeps the original imagePrompt for display / context continuity.
-            const genPrompt = enhanceImagePrompt(imagePrompt);
-            const { buf, mime, width, height } = imageRef
-              ? await generateImageEdit(genPrompt, imageRef, upstreamAbort.signal)
-              : await generateImage(genPrompt, upstreamAbort.signal);
-            const { imageId, messageId } = await createImageMessage({
-              sessionId,
-              prompt: imagePrompt,
-              bytes: buf,
-              mime,
-              byteLen: buf.length,
-              width,
-              height,
-              caption: mixed ? caption : null,
-            });
-            emit("image", {
-              imageId,
-              messageId,
-              imageUrl: `/api/images/${imageId}`,
-              prompt: imagePrompt,
-            });
-            emit("done", { assistantMessageId: messageId });
-            controller.close();
-            return;
-          } catch (e) {
-            const upstreamStatus =
-              e instanceof HttpError && e.details && typeof e.details === "object"
-                ? (e.details as { upstreamStatus?: number }).upstreamStatus
-                : undefined;
-            const code = e instanceof HttpError ? e.code : undefined;
-            const action = imageFailureAction(code, upstreamStatus);
-
-            if (action === "capacity") {
-              // Upstream quota/capacity exhausted → a calm chat message, not a scary
-              // error banner (temporary provider limit, not a user/prompt issue).
-              emit("route", { kind: "chat" });
-              const msg =
-                "圖片產生服務目前額度用盡或忙線中 🙏，請稍後再試（通常過一段時間會自動恢復）。";
-              const saved = await persistAssistant(sessionId, msg, null, false);
-              emit("delta", { text: msg });
-              emit("done", { assistantMessageId: saved.id });
-              controller.close();
-              return;
+              // The image model ran but produced no image, or it rejected the prompt
+              // (400/422). Don't surface a scary error — fall through to a chat reply
+              // that nudges the user to reword. Log which case for diagnostics.
+              if (action === "no-output") {
+                await logError({
+                  scope: "generate.image-fallback",
+                  code: "IMAGE_NO_OUTPUT",
+                  status: upstreamStatus,
+                  message: "生不出圖片，改用對話回覆並引導使用者改寫 prompt",
+                  detail: e instanceof HttpError ? (e.details ?? e) : e,
+                  sessionId,
+                });
+                fallbackHint = "no-output";
+              } else {
+                await logError({
+                  scope: "generate.image-fallback",
+                  code: "IMAGE_REJECTED",
+                  status: upstreamStatus,
+                  message: "圖片 prompt 被拒，改用對話回覆",
+                  detail: e instanceof HttpError ? e.details : e,
+                  sessionId,
+                });
+                fallbackHint = "rejected";
+              }
             }
-            if (action === "rethrow") throw e;
-
-            // The image model ran but produced no image, or it rejected the prompt
-            // (400/422). Don't surface a scary error — fall through to a chat reply
-            // that nudges the user to reword. Log which case for diagnostics.
-            if (action === "no-output") {
-              await logError({
-                scope: "generate.image-fallback",
-                code: "IMAGE_NO_OUTPUT",
-                status: upstreamStatus,
-                message: "生不出圖片，改用對話回覆並引導使用者改寫 prompt",
-                detail: e instanceof HttpError ? (e.details ?? e) : e,
-                sessionId,
-              });
-              fallbackHint = "no-output";
-            } else {
-              await logError({
-                scope: "generate.image-fallback",
-                code: "IMAGE_REJECTED",
-                status: upstreamStatus,
-                message: "圖片 prompt 被拒，改用對話回覆",
-                detail: e instanceof HttpError ? e.details : e,
-                sessionId,
-              });
-              fallbackHint = "rejected";
-            }
+          } finally {
+            releaseImageSlot(userId);
           }
         }
 

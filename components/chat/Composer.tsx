@@ -1,13 +1,16 @@
 "use client";
 
-import { Plus, Send, Square, X } from "lucide-react";
+import { LayoutTemplate, Plus, Send, Square, X } from "lucide-react";
 import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { IMAGE_PRESETS } from "@/lib/imagePresets";
 
 interface Props {
   disabled?: boolean; // no active session
   busy?: boolean; // streaming / generating
   canUpload?: boolean; // whether this account may attach 素材 images
+  /** External prefill (empty-state example cards): bump `nonce` to (re)apply `text`. */
+  prefill?: { text: string; nonce: number };
   onSend: (text: string, files?: File[]) => void;
   onStop: () => void;
 }
@@ -15,12 +18,31 @@ interface Props {
 const MAX_FILES = 4;
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 
-export function Composer({ disabled, busy, canUpload = false, onSend, onStop }: Props) {
+export function Composer({ disabled, busy, canUpload = false, prefill, onSend, onStop }: Props) {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
+  const [showTpl, setShowTpl] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Prefill the textarea from a template chip or an empty-state example card, then
+  // focus so the user can fill the blanks. autosize after the value lands.
+  function prefillWith(text: string) {
+    setValue(text);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    });
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: apply only when nonce changes
+  useEffect(() => {
+    if (prefill?.text) prefillWith(prefill.text);
+  }, [prefill?.nonce]);
 
   // Thumbnails for the picked 素材; revoke object URLs on change/unmount.
   useEffect(() => {
@@ -92,7 +114,35 @@ export function Composer({ disabled, busy, canUpload = false, onSend, onStop }: 
             ))}
           </div>
         )}
+        {showTpl && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {IMAGE_PRESETS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                disabled={disabled || busy}
+                onClick={() => {
+                  prefillWith(p.starter);
+                  setShowTpl(false);
+                }}
+                className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-2 px-2.5 py-1 text-xs text-ink hover:bg-surface disabled:opacity-40"
+              >
+                <span aria-hidden>{p.emoji}</span> {p.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2 rounded-xl border border-line bg-surface p-2">
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={disabled || busy}
+            onClick={() => setShowTpl((v) => !v)}
+            aria-label="圖片模板"
+            aria-pressed={showTpl}
+          >
+            <LayoutTemplate size={18} />
+          </Button>
           {canUpload && (
             <>
               <input

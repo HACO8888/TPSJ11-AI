@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { formatTime, totalTokens } from "@/lib/format";
 import type { LiveState } from "@/lib/hooks/useConversation";
+import { IMAGE_PRESETS } from "@/lib/imagePresets";
 import type { ChatMessageDTO } from "@/lib/types";
 import { ImageMessage } from "./ImageMessage";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -17,6 +18,8 @@ interface Props {
   live: LiveState;
   busy: boolean;
   onRegenerate: (messageId: string, content?: string) => void;
+  /** Prefill the composer from an empty-state example card. */
+  onPickExample?: (text: string) => void;
 }
 
 function Waypoint({ kind }: { kind: NodeKind }) {
@@ -182,7 +185,7 @@ function AssistantText({ content, partial }: { content: string; partial?: boolea
   );
 }
 
-export function MessageList({ messages, live, busy, onRegenerate }: Props) {
+export function MessageList({ messages, live, busy, onRegenerate, onPickExample }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
 
@@ -213,7 +216,7 @@ export function MessageList({ messages, live, busy, onRegenerate }: Props) {
       >
         <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
           {isEmpty ? (
-            <EmptyConversation />
+            <EmptyConversation onPick={onPickExample} />
           ) : (
             <>
               {messages.map((m) => {
@@ -320,14 +323,34 @@ function Dot() {
   return <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-muted" />;
 }
 
-function EmptyConversation() {
+function EmptyConversation({ onPick }: { onPick?: (text: string) => void }) {
   return (
-    <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
+    <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
       <Flame className="mb-3 h-8 w-8 text-accent" strokeWidth={1.8} />
       <h2 className="font-display text-lg font-semibold text-ink">開始第一段對話</h2>
       <p className="mt-1.5 max-w-sm text-sm text-muted">
         直接輸入訊息開始。需要圖片時就說「幫我畫…」，系統會自動生成。每個對話都有獨立的記憶。
       </p>
+      {onPick && (
+        <>
+          <p className="mt-6 mb-2 font-mono text-[11px] text-muted">試試看，點一下帶入範本：</p>
+          <div className="grid w-full max-w-md grid-cols-2 gap-2 sm:grid-cols-3">
+            {IMAGE_PRESETS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => onPick(p.starter)}
+                className="flex flex-col items-center gap-1 rounded-xl border border-line bg-surface px-3 py-3 text-sm text-ink transition-colors hover:border-accent/50 hover:bg-surface-2"
+              >
+                <span className="text-xl" aria-hidden>
+                  {p.emoji}
+                </span>
+                <span>做{p.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

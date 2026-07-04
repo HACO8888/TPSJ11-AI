@@ -13,6 +13,9 @@ vi.mock("@/db/queries", () => ({
   persistAssistant: vi.fn(async () => ({ id: "asst1" })),
   getSessionRow: vi.fn(async () => null),
   listGeneratedImages: vi.fn(async () => []),
+  // image-quota deps (real module, mocked DB): null settings → defaults, 0 used today.
+  getSetting: vi.fn(async () => null),
+  countUserImagesToday: vi.fn(async () => 0),
 }));
 vi.mock("./drive", () => ({ saveSessionImagesToCloud: vi.fn() }));
 vi.mock("./errors", () => ({ logError: vi.fn(async () => "REF123") }));
@@ -53,6 +56,7 @@ async function collect(
 ): Promise<{ event: string; data: Record<string, unknown> }[]> {
   const stream = buildGenerationStream({
     sessionId: "s1",
+    userId: "u-test",
     content,
     userMessageId: "u1",
     signal: new AbortController().signal,

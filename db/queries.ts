@@ -483,6 +483,68 @@ export async function listGeneratedImages(sessionId: string): Promise<GeneratedI
   );
 }
 
+export interface GalleryImage {
+  id: string;
+  prompt: string | null;
+  sessionId: string;
+  sessionTitle: string;
+  createdAt: Date;
+}
+
+/**
+ * Every generated image the user still has (across their live sessions/messages), newest
+ * first — the personal image gallery. Optional case-insensitive prompt search. Excludes
+ * uploaded 素材 and images from soft-deleted sessions/regenerated-away turns.
+ */
+export async function listUserImages(
+  userId: string,
+  opts?: { q?: string; limit?: number },
+): Promise<GalleryImage[]> {
+  const limit = Math.min(300, Math.max(1, opts?.limit ?? 120));
+  const q = opts?.q?.trim();
+  const conds = [
+    eq(sessions.userId, userId),
+    isNull(sessions.deletedAt),
+    isNull(messages.deletedAt),
+    eq(images.source, "generated"),
+  ];
+  if (q) conds.push(sql`${images.prompt} ilike ${`%${q}%`}`);
+  return db
+    .select({
+      id: images.id,
+      prompt: images.prompt,
+      sessionId: images.sessionId,
+      sessionTitle: sessions.title,
+      createdAt: images.createdAt,
+    })
+    .from(images)
+    .innerJoin(messages, eq(messages.id, images.messageId))
+    .innerJoin(sessions, eq(sessions.id, images.sessionId))
+    .where(and(...conds))
+    .orderBy(desc(images.createdAt))
+    .limit(limit);
+}
+
+/**
+ * How many images this user has generated since Taipei-local midnight today — the daily
+ * image quota counter. Counts ALL generated images (including from soft-deleted
+ * sessions / regenerated-away turns) so a user can't reset the count by deleting.
+ */
+export async function countUserImagesToday(userId: string): Promise<number> {
+  const [r] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(images)
+    .innerJoin(sessions, eq(sessions.id, images.sessionId))
+    .where(
+      and(
+        eq(sessions.userId, userId),
+        eq(images.source, "generated"),
+        sql`${images.createdAt} >= (date_trunc('day', now() AT TIME ZONE 'Asia/Taipei')) AT TIME ZONE 'Asia/Taipei'`,
+      ),
+    );
+  return r?.n ?? 0;
+}
+
 /* --------------------------------- cloud save ---------------------------------- */
 
 export interface SessionRow {
@@ -771,6 +833,57 @@ export async function listErrorLogsAdmin(limit = 200) {
 
 export async function deleteErrorLogById(id: string): Promise<void> {
   await db.delete(errorLogs).where(eq(errorLogs.id, id));
+}
+
+export interface UsageStats {
+  imagesToday: number;
+  images7d: number;
+  tokensTotal: number;
+  byUser: { username: string | null; images: number }[];
+  topPrompts: { prompt: string; count: number }[];
+}
+
+/** Usage / cost dashboard aggregates for the admin. */
+export async function getUsageStats(): Promise<UsageStats> {
+  const todayStart = sql`(date_trunc('day', now() AT TIME ZONE 'Asia/Taipei')) AT TIME ZONE 'Asia/Taipei'`;
+  const gen = eq(images.source, "generated");
+
+  const [imgToday] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(images)
+    .where(and(gen, sql`${images.createdAt} >= ${todayStart}`));
+  const [img7d] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(images)
+    .where(and(gen, sql`${images.createdAt} >= now() - interval '7 days'`));
+  const [tok] = await db
+    .select({ n: sql<number>`coalesce(sum((${messages.usage}->>'total_tokens')::int), 0)::int` })
+    .from(messages);
+
+  const byUser = await db
+    .select({ username: users.username, images: sql<number>`count(${images.id})::int` })
+    .from(users)
+    .leftJoin(sessions, eq(sessions.userId, users.id))
+    .leftJoin(images, and(eq(images.sessionId, sessions.id), gen))
+    .groupBy(users.username)
+    .orderBy(desc(sql`count(${images.id})`))
+    .limit(10);
+
+  const topPrompts = await db
+    .select({ prompt: images.prompt, count: sql<number>`count(*)::int` })
+    .from(images)
+    .where(and(gen, sql`${images.prompt} is not null and ${images.prompt} <> ''`))
+    .groupBy(images.prompt)
+    .orderBy(desc(sql`count(*)`))
+    .limit(12);
+
+  return {
+    imagesToday: imgToday?.n ?? 0,
+    images7d: img7d?.n ?? 0,
+    tokensTotal: tok?.n ?? 0,
+    byUser,
+    topPrompts: topPrompts.map((p) => ({ prompt: p.prompt ?? "", count: p.count })),
+  };
 }
 
 /** Row counts for the admin dashboard. */

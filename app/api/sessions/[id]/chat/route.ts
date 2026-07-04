@@ -108,6 +108,7 @@ export const POST = route<Ctx>(async (req: NextRequest, { params }) => {
 
   const stream = buildGenerationStream({
     sessionId,
+    userId: uid,
     content,
     userMessageId: userMsg.id,
     signal: req.signal,

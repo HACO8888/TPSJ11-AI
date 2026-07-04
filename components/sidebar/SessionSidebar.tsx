@@ -1,6 +1,6 @@
 "use client";
 
-import { Flame, Plus, Shield } from "lucide-react";
+import { Flame, Images, Plus, Shield } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import type { SessionMeta } from "@/lib/types";
@@ -70,6 +70,14 @@ export function SessionSidebar({
           {username ?? ""}
         </span>
         <div className="flex items-center gap-1">
+          <a
+            href="/gallery"
+            aria-label="圖庫"
+            title="圖庫"
+            className="rounded-md p-2 text-muted hover:bg-surface-2 hover:text-ink"
+          >
+            <Images size={18} />
+          </a>
           {isAdmin && (
             <a
               href="/admin"

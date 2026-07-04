@@ -6,10 +6,12 @@ import { AdminData } from "@/components/admin/AdminData";
 import { AdminDrive } from "@/components/admin/AdminDrive";
 import { AdminSettings } from "@/components/admin/AdminSettings";
 import { AdminTeams } from "@/components/admin/AdminTeams";
+import { AdminUsage } from "@/components/admin/AdminUsage";
 import { ThemeProvider } from "@/components/ui/ThemeProvider";
 import { useMe } from "@/lib/hooks/useMe";
 
 const TABS = [
+  { key: "usage", label: "用量" },
   { key: "accounts", label: "帳號" },
   { key: "teams", label: "小隊" },
   { key: "drive", label: "雲端 Drive" },
@@ -21,7 +23,7 @@ type TabKey = (typeof TABS)[number]["key"];
 
 export default function AdminPage() {
   const me = useMe();
-  const [tab, setTab] = useState<TabKey>("accounts");
+  const [tab, setTab] = useState<TabKey>("usage");
 
   if (me.isLoading) return <div className="p-6 text-muted">載入中…</div>;
   if (!me.data?.isAdmin) {
@@ -61,6 +63,7 @@ export default function AdminPage() {
           ))}
         </div>
 
+        {tab === "usage" && <AdminUsage />}
         {tab === "accounts" && <AdminAccounts />}
         {tab === "teams" && <AdminTeams />}
         {tab === "drive" && <AdminDrive />}
