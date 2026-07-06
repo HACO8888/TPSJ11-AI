@@ -173,8 +173,32 @@ describe("buildGenerationStream event sequence", () => {
       "done",
     ]);
     expect(events[3].data).toMatchObject({ kind: "chat" });
-    expect(String(events[4].data.text)).toContain("額度用盡或忙線");
+    // Real quota exhaustion → an honest "額度已用盡" message (distinct from a busy blip).
+    expect(String(events[4].data.text)).toContain("額度已用盡");
     // never an error event
+    expect(events.some((e) => e.event === "error")).toBe(false);
+  });
+
+  it("upstream busy (no healthy provider) → honest 忙線 message, not a quota message, no error", async () => {
+    vi.mocked(classifyImageIntent).mockResolvedValue({
+      image: true,
+      ready: true,
+      edit: false,
+      prompt: "一張圖",
+      caption: "來畫圖 🖼️",
+    });
+    // A transient gateway "no healthy provider" that aiClient already auto-retried and
+    // still failed — must degrade to a calm BUSY message, never "你的額度用盡".
+    vi.mocked(generateImage).mockRejectedValue(
+      new HttpError(502, "UPSTREAM_BUSY", "圖片服務暫時忙線中，請稍後再試", {
+        upstreamStatus: 500,
+      }),
+    );
+
+    const events = await collect("幫我畫一張營火晚會海報");
+    expect(events[3].data).toMatchObject({ kind: "chat" });
+    expect(String(events[4].data.text)).toContain("忙線");
+    expect(String(events[4].data.text)).not.toContain("額度");
     expect(events.some((e) => e.event === "error")).toBe(false);
   });
 });

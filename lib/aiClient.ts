@@ -1,7 +1,7 @@
 import "server-only";
 import { env } from "@/lib/env";
 import { HttpError } from "@/lib/http";
-import { classifyUpstreamError } from "./upstream-errors";
+import { classifyUpstreamError, isRetryableUpstream } from "./upstream-errors";
 
 /** OpenAI-style multimodal content: a plain string, or text + image_url parts (vision). */
 export type ChatTextPart = { type: "text"; text: string };
@@ -67,8 +67,17 @@ export interface GeneratedImage {
   height: number | null;
 }
 
-/** Generate an image. Upstream returns base64 (~8MB JPEG, ~23s). */
+/**
+ * Generate an image. Upstream returns base64 (~8MB JPEG, ~23s). The gateway's single
+ * image model is intermittently unavailable ("no healthy provider") or briefly 5xx, so
+ * transient failures are auto-retried with backoff (see withImageRetry). A first-try
+ * success pays zero extra latency.
+ */
 export async function generateImage(prompt: string, signal?: AbortSignal): Promise<GeneratedImage> {
+  return withImageRetry(() => generateImageOnce(prompt, signal), signal);
+}
+
+async function generateImageOnce(prompt: string, signal?: AbortSignal): Promise<GeneratedImage> {
   const r = await fetch(`${base()}/images/generations`, {
     method: "POST",
     headers: authHeaders(),
@@ -94,8 +103,17 @@ export interface ImageReference {
  * Image-to-image edit: transform a reference image per the prompt. Uses the
  * gateway's multipart `/images/edits` (confirmed working via scripts/probe-image-edit.ts).
  * Used for "把這張照片做成卡通版" and for follow-up edits of a generated image.
+ * Transient upstream failures are auto-retried (see withImageRetry).
  */
 export async function generateImageEdit(
+  prompt: string,
+  reference: ImageReference,
+  signal?: AbortSignal,
+): Promise<GeneratedImage> {
+  return withImageRetry(() => generateImageEditOnce(prompt, reference, signal), signal);
+}
+
+async function generateImageEditOnce(
   prompt: string,
   reference: ImageReference,
   signal?: AbortSignal,
@@ -226,6 +244,69 @@ export async function imageChatOnce(
   const j = await r.json();
   const msg = j?.choices?.[0]?.message;
   return { text: extractText(msg?.content), image: extractImageFromMessage(msg) };
+}
+
+/* ------------------------------- retry policy ---------------------------------- */
+
+// Bounded retry for TRANSIENT image-generation failures. The gateway's only image
+// model intermittently has "no healthy provider" or a brief 5xx / no-image reply; a
+// quick backoff+retry usually clears it. Non-transient failures (real quota, auth, a
+// rejected prompt, an abort) are thrown immediately — see isRetryableUpstream.
+const IMAGE_RETRY = { maxRetries: 2, baseMs: 800, factorMs: 2, capMs: 3000, jitterMs: 400 };
+
+function upstreamStatusOf(e: HttpError): number | undefined {
+  return e.details && typeof e.details === "object"
+    ? (e.details as { upstreamStatus?: number }).upstreamStatus
+    : undefined;
+}
+
+function backoffMs(attempt: number): number {
+  const raw = Math.min(IMAGE_RETRY.capMs, IMAGE_RETRY.baseMs * IMAGE_RETRY.factorMs ** attempt);
+  return raw + Math.random() * IMAGE_RETRY.jitterMs;
+}
+
+/** Sleep for `ms`, or reject early with ABORTED if the signal fires meanwhile. */
+function realSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new HttpError(499, "ABORTED", "已取消"));
+      return;
+    }
+    let t: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new HttpError(499, "ABORTED", "已取消"));
+    };
+    t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Run an image-generation attempt with bounded retries for transient upstream failures.
+ * `sleep`/`maxRetries` are injectable so the retry policy can be unit-tested without
+ * real timers or network. On a first-try success the caller pays zero extra latency.
+ */
+export async function withImageRetry<T>(
+  attempt: () => Promise<T>,
+  signal?: AbortSignal,
+  opts?: { maxRetries?: number; sleep?: (ms: number, signal?: AbortSignal) => Promise<void> },
+): Promise<T> {
+  const maxRetries = opts?.maxRetries ?? IMAGE_RETRY.maxRetries;
+  const sleep = opts?.sleep ?? realSleep;
+  for (let i = 0; ; i++) {
+    try {
+      return await attempt();
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      const retryable = e instanceof HttpError && isRetryableUpstream(e.code, upstreamStatusOf(e));
+      if (!retryable || i >= maxRetries) throw e;
+      await sleep(backoffMs(i), signal);
+    }
+  }
 }
 
 /* --------------------------------- helpers ------------------------------------- */

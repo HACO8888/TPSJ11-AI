@@ -411,12 +411,15 @@ export function buildGenerationStream(opts: {
               const code = e instanceof HttpError ? e.code : undefined;
               const action = imageFailureAction(code, upstreamStatus);
 
-              if (action === "capacity") {
-                // Upstream quota/capacity exhausted → a calm chat message, not a scary
-                // error banner (temporary provider limit, not a user/prompt issue).
+              if (action === "capacity" || action === "busy") {
+                // Both degrade to a calm chat message, never a scary error banner — but
+                // with HONEST, distinct wording: real quota exhaustion vs. a transient
+                // gateway busy/no-provider blip (which aiClient already auto-retried).
                 emit("route", { kind: "chat" });
                 const msg =
-                  "圖片產生服務目前額度用盡或忙線中 🙏，請稍後再試（通常過一段時間會自動恢復）。";
+                  action === "capacity"
+                    ? "圖片產生服務今天的額度已用盡 🙏，通常過一段時間會自動恢復，請稍後再試。"
+                    : "圖片產生服務現在有點忙線 🙏，剛才自動重試了幾次仍未成功，請稍等一下再送一次。";
                 const saved = await persistAssistant(sessionId, msg, null, false);
                 emit("delta", { text: msg });
                 emit("done", { assistantMessageId: saved.id });
