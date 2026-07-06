@@ -24,8 +24,8 @@ import { saveSessionImagesToCloud } from "./drive";
 import { logError } from "./errors";
 import { HttpError } from "./http";
 import { acquireImageSlot, releaseImageSlot } from "./image-quota";
-import { whitenBackground } from "./imageClean";
-import { enhanceImagePrompt, wantsFlatWhite } from "./imagePrompt";
+import { cleanupGeneratedImage } from "./imageClean";
+import { enhanceImagePrompt } from "./imagePrompt";
 import {
   classifyImageIntent,
   draftImageCaption,
@@ -378,11 +378,12 @@ export function buildGenerationStream(opts: {
               const gen = imageRef
                 ? await generateImageEdit(genPrompt, imageRef, upstreamAbort.signal)
                 : await generateImage(genPrompt, upstreamAbort.signal);
-              // Flat-background graphics (logo/nametag/…): snap the model's textured
-              // near-white to pure white so it doesn't surface as JPEG noise. Photos /
-              // scenes are left untouched (wantsFlatWhite is conservative).
-              const bytes = wantsFlatWhite(imagePrompt) ? await whitenBackground(gen.buf) : gen.buf;
-              const mime = bytes === gen.buf ? gen.mime : "image/jpeg";
+              // Post-process for the intended background: flat-white graphics (logo/…)
+              // get connectivity flood-fill; greyscale coloring pages get their grey haze
+              // flattened to white; colourful scenes/photos pass through untouched.
+              const cleaned = await cleanupGeneratedImage(gen.buf, imagePrompt);
+              const bytes = cleaned.bytes;
+              const mime = cleaned.mime ?? gen.mime;
               const { imageId, messageId } = await createImageMessage({
                 sessionId,
                 prompt: imagePrompt,

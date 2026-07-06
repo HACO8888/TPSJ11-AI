@@ -3,9 +3,9 @@ import { createImageMessage, createSession } from "@/db/queries";
 import { generateImage } from "./aiClient";
 import { logError } from "./errors";
 import { acquireImageSlot, releaseImageSlot } from "./image-quota";
-import { whitenBackground } from "./imageClean";
+import { cleanupGeneratedImage } from "./imageClean";
 import { IMAGE_PRESETS } from "./imagePresets";
-import { enhanceImagePrompt, wantsFlatWhite } from "./imagePrompt";
+import { enhanceImagePrompt } from "./imagePrompt";
 
 /**
  * Batch image generation: one image per list item (e.g. a nametag / certificate per
@@ -57,8 +57,6 @@ export function buildBatchStream(opts: BatchInput): ReadableStream<Uint8Array> {
 
         const session = await createSession(userId, `批次：${preset.label}（${items.length}）`);
         emit("meta", { sessionId: session.id, total: items.length, preset: preset.label });
-        // Flat-background presets (nametag/cert/badge) → clean the near-white background.
-        const flat = wantsFlatWhite(preset.style);
 
         let count = 0;
         for (let i = 0; i < items.length; i++) {
@@ -78,12 +76,15 @@ export function buildBatchStream(opts: BatchInput): ReadableStream<Uint8Array> {
           try {
             const prompt = buildBatchPrompt(preset.label, preset.style, preset.aspect, item);
             const gen = await generateImage(prompt, upstreamAbort.signal);
-            const bytes = flat ? await whitenBackground(gen.buf) : gen.buf;
+            // Flat-background presets (nametag/cert/badge) → snap the near-white to pure
+            // white; the rest pass through (pixel-gated line-art detection is a no-op on
+            // these colourful presets).
+            const { bytes, mime } = await cleanupGeneratedImage(gen.buf, preset.style);
             const { imageId } = await createImageMessage({
               sessionId: session.id,
               prompt: `${preset.label}：${item}`,
               bytes,
-              mime: bytes === gen.buf ? gen.mime : "image/jpeg",
+              mime: mime ?? gen.mime,
               byteLen: bytes.length,
               width: gen.width,
               height: gen.height,

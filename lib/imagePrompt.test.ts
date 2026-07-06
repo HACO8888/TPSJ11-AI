@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enhanceImagePrompt, type ImagePreset, wantsFlatWhite } from "./imagePrompt";
+import { enhanceImagePrompt, type ImagePreset, wantsFlatWhite, wantsLineArt } from "./imagePrompt";
 
 describe("wantsFlatWhite", () => {
   it.each([
@@ -24,10 +24,42 @@ describe("wantsFlatWhite", () => {
   });
 });
 
+describe("wantsLineArt", () => {
+  it.each([
+    "幫我畫一張松鼠童軍的著色頁",
+    "來一張著色本，主題營火",
+    "coloring page of a scout tent",
+    "a black and white line art squirrel to color in",
+    "線稿：小隊旗幟",
+    "colouring sheet",
+    "可以塗色的黑白線稿",
+  ])("matches coloring-page / line-art requests: %s", (t) => {
+    expect(wantsLineArt(t)).toBe(true);
+  });
+
+  it.each([
+    "營火晚會的海報",
+    "一隻在營火旁的狼",
+    "一個隊徽 logo，純色背景",
+    "橫式證書／獎狀",
+    "彩色的松鼠插畫",
+  ])("does not match coloured / non-line-art images: %s", (t) => {
+    expect(wantsLineArt(t)).toBe(false);
+  });
+});
+
 describe("enhanceImagePrompt", () => {
   it("appends the flat-white directive only when a flat background is wanted", () => {
     expect(enhanceImagePrompt("一個隊徽 logo，純色背景")).toContain("純白平面");
     expect(enhanceImagePrompt("一隻在營火旁的狼")).not.toContain("純白平面");
+  });
+
+  it("appends the line-art directive only when a coloring page is wanted", () => {
+    const out = enhanceImagePrompt("幫我畫一張松鼠童軍的著色頁");
+    expect(out).toContain("純黑色線條");
+    expect(out).toContain("松鼠童軍");
+    // A colourful scene must NOT get the line-art directive.
+    expect(enhanceImagePrompt("營火晚會的海報")).not.toContain("純黑色線條");
   });
 
   it("keeps the raw subject leading and appends a quality tail", () => {

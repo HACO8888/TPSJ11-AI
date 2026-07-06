@@ -42,8 +42,29 @@ export function wantsFlatWhite(text: string): boolean {
   return FLAT_WHITE.test(text);
 }
 
+// A printable coloring page / line-art is wanted (著色頁/著色本/線稿/coloring page …).
+// Distinct from FLAT_WHITE: here the WHOLE image should be pure black outlines on white
+// with no colour and no grey — the model instead paints a photographed off-white with a
+// grey haze, so we both harden the prompt and flatten the greys post-hoc. Deliberately
+// does not match "彩色/coloured" (那是要上色的成品，不是線稿).
+const LINE_ART =
+  /著色|塗色|填色|線稿|描邊線|coloring|colouring|line[\s-]?art|lineart|colou?r\s+in\b|black[\s-]and[\s-]white\s+outline/i;
+
+/**
+ * True when the prompt asks for a black-and-white coloring page / line-art drawing —
+ * the case where the image model tends to add a grey haze/vignette over what should be
+ * a pure black-on-white line drawing. We harden the prompt and flatten the greys to
+ * white afterwards. See flattenLineArt in lib/imageClean.ts.
+ */
+export function wantsLineArt(text: string): boolean {
+  return LINE_ART.test(text);
+}
+
 const FLAT_WHITE_DIRECTIVE =
   "背景必須是單一純白平面 #FFFFFF，像去背後乾淨地放在純白上，完全沒有任何紋理、漸層、陰影、雜點、污漬、做舊、復古、磨損、斑駁、網格、紙張或布料質感，乾淨俐落的向量插畫風格";
+
+const LINE_ART_DIRECTIVE =
+  "純黑色線條的黑白著色線稿，乾淨俐落的向量描邊，純白 #FFFFFF 背景，畫面只有黑色外框線，完全沒有任何灰階、灰色、陰影、上色、填色、網底、漸層、紋理、雜點或做舊質感，線條清晰封閉、粗細均勻，適合列印著色";
 
 function trimTail(s: string): string {
   return s.replace(/[。，、\s]+$/u, "").trim();
@@ -58,11 +79,14 @@ function trimTail(s: string): string {
 export function enhanceImagePrompt(raw: string, preset?: ImagePreset): string {
   // Harden the prompt at the source when a flat white background is wanted.
   const flat = wantsFlatWhite(raw) || (preset ? wantsFlatWhite(preset.style) : false);
+  // …or a black-and-white coloring page (steer the model to clean line-art up front).
+  const lineArt = wantsLineArt(raw) || (preset ? wantsLineArt(preset.style) : false);
   const parts = [
     raw,
     preset?.style ?? "",
     preset?.aspect ? `畫面比例約 ${preset.aspect}` : "",
     flat ? FLAT_WHITE_DIRECTIVE : "",
+    lineArt ? LINE_ART_DIRECTIVE : "",
     QUALITY_TAIL,
   ]
     .map(trimTail)

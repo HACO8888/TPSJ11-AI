@@ -1,4 +1,5 @@
 import "server-only";
+import { wantsFlatWhite } from "./imagePrompt";
 
 /**
  * Background cleanup for flat/plain-background graphics (logos, emblems, nametags,
@@ -182,4 +183,134 @@ export async function whitenBackground(buf: Buffer): Promise<Buffer> {
     // sharp unavailable / decode failure → keep the original bytes, never break generation.
     return buf;
   }
+}
+
+/**
+ * Background cleanup for black-and-white coloring pages / line-art (著色頁/線稿).
+ *
+ * A different regime from whitenBackground. A coloring page is, by definition, pure black
+ * line-art on white — there are NO legitimate mid-tones or colours to protect. The model
+ * still paints a photographed off-white with a grey haze/vignette, but here the grey
+ * overlaps line-art luminance *spatially* (a haze band can dip to ~145, below any single
+ * flood threshold that still clears black ink), so a connectivity flood-fill barely helps
+ * (measured on real pages: 36% grey → 33%). Because nothing light is worth keeping, the
+ * right tool is the very thing that is WRONG for a coloured flat-white graphic — a global
+ * tone curve — applied here where it is safe and, measured, effective (grey 36–54% → ~1%,
+ * black-ink fraction unchanged).
+ *
+ * The curve is monotonic and only ever *lightens* (out ≥ in for every input), so it can
+ * never darken a pixel and therefore structurally cannot harden a sub-threshold streak
+ * into a crisp dark mark — the failure mode of the old `linear(1.6,-80)` white-point
+ * stretch. Ink at/below LINE_KNEE_LO is returned byte-for-byte (lines stay crisp black);
+ * the grey haze at/above LINE_KNEE_HI snaps to pure white; the narrow band between ramps
+ * smoothly so anti-aliased line edges survive.
+ *
+ * Self-gating on pixels (not the prompt): only fires when the image really is greyscale
+ * line-art, so a colourful scene/photo — whose real highlights a global whiten would blow
+ * out — is passed through as the SAME buffer reference (callers use the identity check to
+ * pick the mime). Any decode/library failure also returns the original bytes unchanged.
+ */
+
+// Ink at/below this luminance stays untouched (black lines + their darkest anti-alias).
+const LINE_KNEE_LO = 112;
+// Grey at/above this snaps to pure white (sweeps the whole haze distribution).
+const LINE_KNEE_HI = 150;
+// Line-art detector, computed on a downscale: essentially greyscale (no colour to wreck),
+// with real black ink, on predominantly white paper.
+const LA_DETECT_WIDTH = 256;
+const LA_CHROMA = 24; // (max−min) RGB above this = a "coloured" pixel
+const LA_MAX_COLOURED = 0.03; // coloured pixels must stay under this fraction
+const LA_MIN_INK = 0.02; // ≥ this fraction genuinely dark → the drawing has line-art
+const LA_MIN_WHITE = 0.25; // ≥ this fraction near-white → real white paper (excludes photos)
+const LA_INK_L = 90;
+const LA_WHITE_L = 238;
+
+export async function flattenLineArt(buf: Buffer): Promise<Buffer> {
+  try {
+    const { default: sharp } = await import("sharp");
+    const rotated = await sharp(buf, { failOn: "none" }).rotate().toBuffer();
+    const meta = await sharp(rotated).metadata();
+    const FW = meta.width;
+    const FH = meta.height;
+    if (!FW || !FH) return buf;
+
+    // (1) Detect: is this a greyscale line-art page? Scan a downscaled RGB copy.
+    const dw = Math.min(LA_DETECT_WIDTH, FW);
+    const dh = Math.max(1, Math.round((FH / FW) * dw));
+    const { data: s } = await sharp(rotated)
+      .resize(dw, dh, { fit: "fill" })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const n = dw * dh;
+    let coloured = 0;
+    let ink = 0;
+    let white = 0;
+    for (let i = 0; i < s.length; i += 3) {
+      const r = s[i];
+      const g = s[i + 1];
+      const b = s[i + 2];
+      if (Math.max(r, g, b) - Math.min(r, g, b) > LA_CHROMA) coloured++;
+      const L = (r * 299 + g * 587 + b * 114) / 1000;
+      if (L < LA_INK_L) ink++;
+      else if (L >= LA_WHITE_L) white++;
+    }
+    if (coloured / n >= LA_MAX_COLOURED || ink / n < LA_MIN_INK || white / n < LA_MIN_WHITE) {
+      return buf; // not a coloring page → leave untouched
+    }
+
+    // (2) Monotonic whitening curve applied to every full-res pixel. The lift strength is
+    // keyed on luminance and applied equally to R/G/B, so the (near-zero) chroma is kept
+    // and grey pixels behave exactly like the 1-D curve.
+    const lift = new Float32Array(256);
+    for (let L = 0; L < 256; L++) {
+      const t = Math.max(0, Math.min(1, (L - LINE_KNEE_LO) / (LINE_KNEE_HI - LINE_KNEE_LO)));
+      lift[L] = t * t * (3 - 2 * t); // smoothstep
+    }
+    const { data: px, info } = await sharp(rotated)
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const ch = info.channels;
+    for (let i = 0; i < px.length; i += ch) {
+      const r = px[i];
+      const g = px[i + 1];
+      const b = px[i + 2];
+      const w = lift[((r * 299 + g * 587 + b * 114) / 1000) | 0];
+      if (w === 0) continue; // dark ink → byte-for-byte unchanged (cannot darken)
+      px[i] = (r + (255 - r) * w + 0.5) | 0;
+      px[i + 1] = (g + (255 - g) * w + 0.5) | 0;
+      px[i + 2] = (b + (255 - b) * w + 0.5) | 0;
+    }
+    // PNG, not JPEG: line-art on pure white would otherwise gain mosquito ringing around
+    // the black strokes — re-introducing the very speckle we just removed.
+    return await sharp(px, {
+      raw: { width: info.width, height: info.height, channels: ch },
+    })
+      .png()
+      .toBuffer();
+  } catch {
+    return buf;
+  }
+}
+
+/**
+ * Post-process a freshly generated image for its intended background.
+ * Returns the cleaned bytes plus the mime to store, or `mime: null` when nothing acted
+ * (the SAME buffer is returned, so the caller keeps the original bytes/mime).
+ */
+export async function cleanupGeneratedImage(
+  buf: Buffer,
+  prompt: string,
+): Promise<{ bytes: Buffer; mime: string | null }> {
+  // Colour-on-white graphics (logo/nametag/…): connectivity flood-fill keeps the coloured
+  // artwork intact while snapping the textured white to pure white.
+  if (wantsFlatWhite(prompt)) {
+    const out = await whitenBackground(buf);
+    return { bytes: out, mime: out === buf ? null : "image/jpeg" };
+  }
+  // Everything else: auto-detect a greyscale line-art / coloring page (pixel-gated, so a
+  // colourful scene or photo passes through untouched) and flatten its grey haze.
+  const out = await flattenLineArt(buf);
+  return { bytes: out, mime: out === buf ? null : "image/png" };
 }

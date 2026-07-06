@@ -1,6 +1,28 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { whitenBackground } from "./imageClean";
+import { flattenLineArt, whitenBackground } from "./imageClean";
+
+// Build a JPEG from an RGB painter (returns [r,g,b]) so we can make coloured fixtures.
+async function jpegRGB(
+  w: number,
+  h: number,
+  paint: (x: number, y: number) => [number, number, number],
+  quality = 95,
+): Promise<Buffer> {
+  const rgb = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const [r, g, b] = paint(x, y);
+      const o = (y * w + x) * 3;
+      rgb[o] = r;
+      rgb[o + 1] = g;
+      rgb[o + 2] = b;
+    }
+  }
+  return await sharp(rgb, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality })
+    .toBuffer();
+}
 
 // Build a JPEG from a raw grayscale-as-RGB buffer (r=g=b=v) so we control exact values.
 async function jpeg(
@@ -67,6 +89,57 @@ describe("whitenBackground (flood-fill)", () => {
   it("returns the original bytes when the input cannot be decoded", async () => {
     const garbage = Buffer.from("this is not an image");
     const out = await whitenBackground(garbage);
+    expect(out).toBe(garbage);
+  });
+});
+
+describe("flattenLineArt", () => {
+  it("snaps grey noise on a line-art page to white while preserving black lines", async () => {
+    // A coloring page: mostly white, crisp black lines, and a broad grey haze band
+    // (value 185) across the top — exactly the artefact the image model paints. The
+    // grey overlaps line-art luminance spatially but there is NO legitimate mid-tone
+    // in a coloring page, so it must all snap to white; the lines must stay black.
+    const W = 400;
+    const H = 300;
+    const src = await jpeg(W, H, (x, y) => {
+      if (x >= 40 && x < 60) return 25; // a bold vertical black line (~5% dark ink)
+      if (x >= 200 && x < 210) return 25; // a second line
+      if (y >= 20 && y < 90) return 185; // grey haze band over the "sky" (~23%)
+      return 254; // white paper
+    });
+
+    const out = await flattenLineArt(src);
+    expect(out).not.toBe(src); // detector fired → it acted
+
+    // Grey haze (both over-white and near a line) is now pure white.
+    expect(await px(out, 300, 55)).toBeGreaterThanOrEqual(246);
+    expect(await px(out, 100, 55)).toBeGreaterThanOrEqual(246);
+    // Black lines preserved — inside and outside the haze band.
+    expect(await px(out, 50, 150)).toBeLessThanOrEqual(60);
+    expect(await px(out, 50, 55)).toBeLessThanOrEqual(60);
+    // Clean paper stays white.
+    expect(await px(out, 350, 250)).toBeGreaterThanOrEqual(250);
+  });
+
+  it("leaves a colourful image untouched (not line art)", async () => {
+    // A saturated scene: high chroma → the grayscale gate rejects it, so flattening
+    // (which would blow out real highlights) must not run.
+    const scene = await jpegRGB(400, 300, (x) => (x < 200 ? [200, 40, 40] : [40, 90, 200]));
+    const out = await flattenLineArt(scene);
+    expect(out).toBe(scene);
+  });
+
+  it("leaves a grey photo (no white paper) untouched", async () => {
+    // Mid-grey with dark ink but almost no pure white → not a coloring page. Whitening
+    // would destroy a real greyscale photo's tones, so the gate must skip it.
+    const photo = await jpeg(400, 300, (_x, y) => (y < 60 ? 30 : 140), 90);
+    const out = await flattenLineArt(photo);
+    expect(out).toBe(photo);
+  });
+
+  it("returns the original bytes when the input cannot be decoded", async () => {
+    const garbage = Buffer.from("still not an image");
+    const out = await flattenLineArt(garbage);
     expect(out).toBe(garbage);
   });
 });
