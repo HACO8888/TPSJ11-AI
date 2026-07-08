@@ -6,7 +6,11 @@ import { appSettings, errorLogs, images, messages, sessions, users } from "./sch
 /* ------------------------------------ users ------------------------------------ */
 
 export async function getUserByUsername(username: string) {
-  const [row] = await db.select().from(users).where(eq(users.username, username)).limit(1);
+  const [row] = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.username, username), isNull(users.deletedAt)))
+    .limit(1);
   return row ?? null;
 }
 
@@ -20,7 +24,7 @@ export async function getUserById(id: string) {
       saveFolderId: users.saveFolderId,
     })
     .from(users)
-    .where(eq(users.id, id))
+    .where(and(eq(users.id, id), isNull(users.deletedAt)))
     .limit(1);
   return row ?? null;
 }
@@ -637,6 +641,7 @@ export async function listUsers(): Promise<AdminUser[]> {
     })
     .from(users)
     .leftJoin(sessions, eq(sessions.userId, users.id))
+    .where(isNull(users.deletedAt))
     .groupBy(users.id)
     .orderBy(asc(users.username));
 }
@@ -674,8 +679,17 @@ export async function setUserPassword(id: string, passwordHash: string): Promise
   await db.update(users).set({ passwordHash, updatedAt: new Date() }).where(eq(users.id, id));
 }
 
+/**
+ * Soft-delete a user: mark deletedAt instead of removing the row, so their
+ * sessions/messages/images survive (login and user lists exclude soft-deleted users).
+ * Hard-deleting a user is intentionally impossible via the app — the sessions FK is
+ * RESTRICT — so an account deletion can never cascade-wipe a whole event's data again.
+ */
 export async function deleteUserById(id: string): Promise<void> {
-  await db.delete(users).where(eq(users.id, id));
+  await db
+    .update(users)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(users.id, id), isNull(users.deletedAt)));
 }
 
 /* --------------------------------- admin: data --------------------------------- */

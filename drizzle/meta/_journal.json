@@ -57,6 +57,13 @@
       "when": 1783171196026,
       "tag": "0007_fluffy_king_cobra",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783531395831,
+      "tag": "0008_tranquil_alex_power",
+      "breakpoints": true
     }
   ]
 }

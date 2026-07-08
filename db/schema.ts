@@ -25,6 +25,11 @@ export const users = pgTable("users", {
   saveFolderId: text("save_folder_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // Soft delete: NULL = live. Deleting a user marks this instead of removing the row,
+  // so their sessions/messages/images are NEVER cascade-destroyed. Excluded from login
+  // and user lists. (A user hard-delete once cascade-wiped a whole event's data — never
+  // again: deletes are soft and the sessions FK below is RESTRICT, not CASCADE.)
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 /** A chat session; each holds its own independent conversation context. */
@@ -34,7 +39,10 @@ export const sessions = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      // RESTRICT (not CASCADE): a user can never be hard-deleted while they own
+      // sessions, so deleting an account cannot cascade-wipe its conversations/images.
+      // User deletion is soft (users.deletedAt); true purge must remove sessions first.
+      .references(() => users.id, { onDelete: "restrict" }),
     title: text("title").notNull().default("新對話"),
     // Google Drive folder id for this session's cloud-saved images (one folder per
     // session, created lazily on first cloud save). Null until the first save.
