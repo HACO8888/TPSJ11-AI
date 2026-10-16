@@ -3,6 +3,7 @@ import { getImageBytes } from "@/db/queries";
 import { requireAuth } from "@/lib/auth/session";
 import { logError } from "@/lib/errors";
 import { HttpError, route, uuidParam } from "@/lib/http";
+import { requestedWidth } from "@/lib/imageWidth";
 
 export const runtime = "nodejs";
 
@@ -21,8 +22,7 @@ export const GET = route<Ctx>(async (req: NextRequest, { params }) => {
 
   // ?w=<n> → serve a downsized JPEG for display (the originals are ~8–12MB, which
   // makes the chat view load slowly). No ?w → the full original (used for 原圖 download).
-  const wRaw = Number(new URL(req.url).searchParams.get("w"));
-  const width = Number.isFinite(wRaw) ? Math.min(2048, Math.max(64, Math.round(wRaw))) : 0;
+  const width = requestedWidth(new URL(req.url).searchParams.get("w"));
 
   if (width > 0) {
     try {
