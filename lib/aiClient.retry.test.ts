@@ -118,14 +118,24 @@ describe("generateImage end-to-end retry", () => {
           ok: false,
           status: 500,
           statusText: "Internal Server Error",
-          url: "https://gateway.test/v1/images/generations",
+          url: "https://gateway.test/v1/chat/completions",
           text: async () =>
             '{"error":{"message":"[API Service] No healthy provider found in pool for gemini-antigravity supporting model: gemini-3.1-flash-image","type":"server_error"}}',
         } as unknown as Response;
       }
       return {
         ok: true,
-        json: async () => ({ data: [{ b64_json: jpegB64 }] }),
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                images: [
+                  { type: "image_url", image_url: { url: `data:image/jpeg;base64,${jpegB64}` } },
+                ],
+              },
+            },
+          ],
+        }),
       } as unknown as Response;
     }) as typeof fetch;
 
@@ -142,7 +152,7 @@ describe("generateImage end-to-end retry", () => {
         ok: false,
         status: 400,
         statusText: "Bad Request",
-        url: "https://gateway.test/v1/images/generations",
+        url: "https://gateway.test/v1/chat/completions",
         text: async () =>
           '{"error":{"message":"Image generation rejected: 這裡是為您設計的徽章…","type":"invalid_request_error"}}',
       } as unknown as Response;

@@ -68,30 +68,13 @@ export interface GeneratedImage {
 }
 
 /**
- * Generate an image. Upstream returns base64 (~8MB JPEG, ~23s). The gateway's single
- * image model is intermittently unavailable ("no healthy provider") or briefly 5xx, so
- * transient failures are auto-retried with backoff (see withImageRetry). A first-try
- * success pays zero extra latency.
+ * Generate an image. The image model answers on /chat/completions with the picture in
+ * `message.images` (the gateway does not serve it on /images/generations). Transient
+ * failures ("no healthy provider", a brief 5xx, a reply with no image) are auto-retried
+ * with backoff (see withImageRetry). A first-try success pays zero extra latency.
  */
 export async function generateImage(prompt: string, signal?: AbortSignal): Promise<GeneratedImage> {
-  return withImageRetry(() => generateImageOnce(prompt, signal), signal);
-}
-
-async function generateImageOnce(prompt: string, signal?: AbortSignal): Promise<GeneratedImage> {
-  const r = await fetch(`${base()}/images/generations`, {
-    method: "POST",
-    headers: authHeaders(),
-    signal,
-    body: JSON.stringify({ model: env.AI_IMAGE_MODEL, prompt }),
-  }).catch(networkError);
-  if (!r.ok) throw await upstreamError(r);
-  const j = await r.json();
-  const b64 = j?.data?.[0]?.b64_json as string | undefined;
-  if (!b64) throw new HttpError(502, "IMAGE_NO_OUTPUT", "這次沒有生成出圖片");
-  const buf = Buffer.from(b64, "base64");
-  const mime = sniffMime(buf);
-  const dims = imageSize(buf);
-  return { buf, mime, width: dims?.width ?? null, height: dims?.height ?? null };
+  return withImageRetry(() => chatImageOnce(prompt, signal), signal);
 }
 
 export interface ImageReference {
@@ -100,8 +83,8 @@ export interface ImageReference {
 }
 
 /**
- * Image-to-image edit: transform a reference image per the prompt. Uses the
- * gateway's multipart `/images/edits` (confirmed working via scripts/probe-image-edit.ts).
+ * Image-to-image edit: transform a reference image per the prompt. The reference goes
+ * in as an `image_url` data URI on /chat/completions, the same call as generateImage.
  * Used for "把這張照片做成卡通版" and for follow-up edits of a generated image.
  * Transient upstream failures are auto-retried (see withImageRetry).
  */
@@ -110,45 +93,33 @@ export async function generateImageEdit(
   reference: ImageReference,
   signal?: AbortSignal,
 ): Promise<GeneratedImage> {
-  return withImageRetry(() => generateImageEditOnce(prompt, reference, signal), signal);
+  const content: ChatContent = [
+    { type: "text", text: prompt },
+    {
+      type: "image_url",
+      image_url: { url: `data:${reference.mime};base64,${reference.bytes.toString("base64")}` },
+    },
+  ];
+  return withImageRetry(() => chatImageOnce(content, signal), signal);
 }
 
-async function generateImageEditOnce(
-  prompt: string,
-  reference: ImageReference,
-  signal?: AbortSignal,
-): Promise<GeneratedImage> {
-  const ext =
-    reference.mime === "image/png"
-      ? "png"
-      : reference.mime === "image/webp"
-        ? "webp"
-        : reference.mime === "image/gif"
-          ? "gif"
-          : "jpg";
-  const fd = new FormData();
-  fd.append("model", env.AI_IMAGE_MODEL);
-  fd.append("prompt", prompt);
-  fd.append(
-    "image",
-    new Blob([new Uint8Array(reference.bytes)], { type: reference.mime }),
-    `reference.${ext}`,
-  );
-  // No Content-Type header — fetch sets the multipart boundary itself.
-  const r = await fetch(`${base()}/images/edits`, {
+/** One image-model call on /chat/completions that must come back with a picture. */
+async function chatImageOnce(content: ChatContent, signal?: AbortSignal): Promise<GeneratedImage> {
+  const r = await fetch(`${base()}/chat/completions`, {
     method: "POST",
-    headers: bearer(),
+    headers: authHeaders(),
     signal,
-    body: fd,
+    body: JSON.stringify({
+      model: env.AI_IMAGE_MODEL,
+      messages: [{ role: "user", content }],
+      modalities: ["image", "text"],
+    }),
   }).catch(networkError);
   if (!r.ok) throw await upstreamError(r);
   const j = await r.json();
-  const b64 = j?.data?.[0]?.b64_json as string | undefined;
-  if (!b64) throw new HttpError(502, "IMAGE_NO_OUTPUT", "這次沒有生成出圖片");
-  const buf = Buffer.from(b64, "base64");
-  const mime = sniffMime(buf);
-  const dims = imageSize(buf);
-  return { buf, mime, width: dims?.width ?? null, height: dims?.height ?? null };
+  const image = extractImageFromMessage(j?.choices?.[0]?.message);
+  if (!image) throw new HttpError(502, "IMAGE_NO_OUTPUT", "這次沒有生成出圖片");
+  return image;
 }
 
 /* --------------------- Strategy A: native single-call text+image ---------------- */

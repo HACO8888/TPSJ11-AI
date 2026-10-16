@@ -313,7 +313,7 @@ export function buildGenerationStream(opts: {
             // ---- Strategy A (experimental, flag-gated): single native text+image call ----
             // Tried silently and non-streaming so a no-image response can fall back to the
             // classic two-step flow below without having streamed half a reply (avoids the
-            // double-text problem). i2i edits keep the dedicated /images/edits path.
+            // double-text problem). i2i edits keep the dedicated generateImageEdit path.
             if (env.AI_NATIVE_INTERLEAVE === "on" && !imageRef) {
               try {
                 const native = await imageChatOnce(

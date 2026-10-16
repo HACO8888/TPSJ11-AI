@@ -6,7 +6,7 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
   AI_API_BASE_URL: z.string().url(),
   AI_API_KEY: z.string().min(1),
-  AI_TEXT_MODEL: z.string().default("gemini-flash-latest"),
+  AI_TEXT_MODEL: z.string().default("gemini-3.8-flash"),
   AI_IMAGE_MODEL: z.string().default("gemini-3.1-flash-image"),
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET 至少需 32 字元"),
   // Text+image "mixed" turns: an image reply also carries a short streamed caption.
